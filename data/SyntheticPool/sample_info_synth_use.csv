@@ -1,3 +1,3 @@
-Sample_Name,IndexNum,index,Description,Source,Treatment,Input.ReadCount,File.Base.ID,lib.method
-pool_d,S34,CATGGC,UO1pool,U01FULL,none,4936318,pool-d_S34,TruSeq
-pool_pnk_c,S41,GACGAC,UO1poolpnkheat,U01FULL,PNKheat,4072924,pool-pnk-c_S41,TruSeq
+Sample_Name,IndexNum,index,Description,Source,Treatment,Input.ReadCount,File.Base.ID,lib.method,enzyme,HEAT,Treatment2,Subpool.ID
+pool_d,S34,CATGGC,UO1pool,U01FULL,none,4936318,pool-d_S34,TruSeq,,NO.HEAT,NO.PNK:NO.HEAT,SynthRNA476v1
+pool_pnk_c,S41,GACGAC,UO1poolpnkheat,U01FULL,PNKheat,4072924,pool-pnk-c_S41,TruSeq,PNK,HEAT,PNK:HEAT,SynthRNA476v1
