@@ -1,4 +1,4 @@
-Sample_Name,IndexNum,index,Description,Source,Treatment,Input.ReadCount,File.Base.ID,lib.method,enzyme,HEAT,Treatment2,Subpool.ID
+Sample_Name,IndexNum,index,Description,Source,Treatment,Input.ReadCount,File.Base.ID,library.method,enzyme,HEAT,Treatment2,Subpool.ID
 plasma_a,S1,ATCACG,U01maleplasma,U01maleplasma,none,,"","",,NO.HEAT,NO.PNK:NO.HEAT,U01maleplasma
 plasma_b,S2,CGATGT,U01maleplasma,U01maleplasma,none,,"","",,NO.HEAT,NO.PNK:NO.HEAT,U01maleplasma
 mirx_a,S3,TTAGGC,miRxplore,miRxplore,none,,"","",,NO.HEAT,NO.PNK:NO.HEAT,miRxplore

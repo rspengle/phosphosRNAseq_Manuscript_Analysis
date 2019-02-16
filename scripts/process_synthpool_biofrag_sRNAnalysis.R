@@ -139,7 +139,7 @@ process_synthpool_biofrag_sRNAnalysis <- function(biofragmenta.outdir,
   read.count.summary2 <- merge(read.count.summary, all.freature.dt.annot.summary.cast, by="IndexNum", all.x=TRUE)
   message(paste0(Sys.time()-tstart, " -- ", biofragmenta.outdir, "-- DONE ----"))
   message(paste0(Sys.time()-tstart, " -- ", biofragmenta.outdir, "-- START: ", "sRNAnalysis Finalizing Output"))
-  setnames(sample.info.dt, "lib.method","library.method")
+  #setnames(sample.info.dt, "lib.method","library.method")
   dt.list <- list(input.files=list(profile.counts=feature.count.fls,
                                    unaligned.fa=unaligned.count.fls,
                                    processed.read.fa=processed.read.fls),

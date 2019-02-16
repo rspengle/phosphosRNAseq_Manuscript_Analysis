@@ -8,48 +8,23 @@ library(cowplot)
 library(ggbeeswarm)
 library(ggpubr)
 
-# Load scripts 
-source("./scripts/process_synthpool_biofrag_sRNAnalysis.R")
-
-# Input files
 data.dir <- "./data/SyntheticPool"
-univec.info.fl = dir(data.dir, pattern="UniVec.description", full.names = TRUE, recursive = TRUE)
 sample.info.fl=dir(data.dir, pattern="sample_info_synth_use.csv", full.names = TRUE, recursive = TRUE)
 biofragmenta.outdir.no4Nrun <- dir(data.dir, pattern="biofragmenta-vsynthetic1.0_20180508_175741", full.names = TRUE, recursive = TRUE, include.dirs = TRUE)
+
+# Load Synthetic pool sequences ----
 pool.fa.fl <- dir(data.dir, pattern="U01_Combined.fa", full.names = TRUE, recursive = TRUE)
 subpool.seqs <- readDNAStringSet(pool.fa.fl, use.names=TRUE)
 subpool.seqs.dt <- data.table(data.frame(Aln.SeqID=names(subpool.seqs), sequence=as.character(subpool.seqs)))
 subpool.seqs.dt[, c("Aln.SeqID.nm", "Aln.Subpool.ID", "AlnSeq.length", "Modification"):=tstrsplit(Aln.SeqID[1], split="|", fixed=TRUE), by=Aln.SeqID]
-dt.list.no4N <- process_synthpool_biofrag_sRNAnalysis(biofragmenta.outdir = biofragmenta.outdir.no4Nrun, univec.info = univec.info.fl, sample.info.fl = sample.info.fl)
 
-all.freature.dt.annot.summary <- copy(dt.list.no4N[["annot.summary"]])
-
-# Sanity check to confirm orientation of alignment relative to subpool. ----
-# should see mostly Subpool (+) alignments
-ggplot(all.freature.dt.annot.summary, aes(x=Sample_Name, y=count, fill=BestMatch.db2)) +
-  geom_bar(pos="stack", stat="identity", color="black") + 
-  theme_bw() + 
-  theme(axis.text.x=element_text(hjust=1, angle=50),
-        legend.position = "top",
-        legend.direction = "horizontal") + 
-  facet_wrap(~library.method, scale="free_x")
-
-# Get process steps ----
-all.process.step.summary <- copy(dt.list.no4N[["read.count.summary"]])
-all.sample.info <- copy(dt.list.no4N[["sample.info.dt"]])
-setnames(all.process.step.summary, "Subpool(+)", "Subpool.Aligned")
-all.process.step.summary[, Preprocessed.count.pct.input:=Preprocessed.count/Input.ReadCount]
-all.process.step.summary[, Subpool.aligned.pct.Preprocessed:=Subpool.Aligned/Preprocessed.count]
-all.process.step.summary[, Unaligned.pct.Preprocessed:=Unaligned.count/Preprocessed.count]
-all.process.step.summary[all.sample.info, `:=`(enzyme=i.enzyme, heat=i.HEAT, Treatment=i.Treatment2), on="IndexNum"]
-
-dt.out <- dt.list.no4N[["feature.count.dt"]][BestMatch.db2=="Subpool(+)"]
-dt.out[, tot.reads]
+all.sample.info <- fread(sample.info.fl)
+all.sample.info[, lib.method:=library.method]
 
 # Read full star align instead of sRNAnalysis
 all.star.aln.dt.TruSeq <- fread(paste0(biofragmenta.outdir.no4Nrun, "/02b-star_alignment_collapsed/ALL_outAligned.out.txt"))
 all.star.aln.dt.TruSeq[, File.Base.ID:=sub("_L00[1-9]_R1_001.*", "", File.Base.ID[1]), by=File.Base.ID]
-all.star.aln.dt.TruSeq <- all.star.aln.dt.TruSeq[all.process.step.summary[library.method=="TruSeq"]$File.Base.ID, , on="File.Base.ID"]
+all.star.aln.dt.TruSeq <- all.star.aln.dt.TruSeq[all.sample.info[library.method=="TruSeq"]$File.Base.ID, , on="File.Base.ID"]
 all.star.aln.dt.TruSeq[, lib.method:="TruSeq"]
 all.star.aln.dt <- copy(all.star.aln.dt.TruSeq)
 all.star.aln.dt[, IndexNum:=tstrsplit(File.Base.ID[1], split="_")[2], by=File.Base.ID]
@@ -173,10 +148,6 @@ ggsave(plot=ggExtra::ggMarginal(g, groupFill = TRUE, type="density"), filename =
 
 all.star.aln.dt.annot.filt.feat.tot.TruSeq.cast.remelt <- melt(all.star.aln.dt.annot.filt.feat.tot.TruSeq.cast, id.vars = c("Pool.SeqID", "Modification"), measure.vars = c("PNK.cpm.totAligned", "Untreated.cpm.totAligned"), variable.name = "Treatment.meas", value.name = "CPM")
 all.star.aln.dt.annot.filt.feat.tot.TruSeq.cast.remelt[, Treatment:=ifelse(Treatment.meas=="PNK.cpm.totAligned", "PNK", ifelse(Treatment.meas=="Untreated.cpm.totAligned", "Untreated", NA))]
-g <- ggplot(all.star.aln.dt.annot.filt.feat.tot.TruSeq.cast.remelt[!is.na(Modification) & Modification%in%c("5p-phosphorylation", "3p-phosphorylation", "None")], aes(y=CPM, x=Modification, fill=Treatment)) + 
-  geom_violin(draw_quantiles = seq(0.25, 0.75, 0.25), size=0.25) + scale_y_log10(limits=c(10^-1,10^5), breaks=10^seq(-1,5), labels = trans_format("log10", math_format())) + theme_bw() + theme(legend.position = "top", axis.ticks = element_line(size=0.5), panel.grid = element_blank(), text = element_text(color="black", size=6)); g
-fig.fl="output/figures/main/FIG1/FIG1C_PNK_VS_Untreated_VIOLIN.pdf"
-ggsave(plot=g, filename = basename(fig.fl), width = 3, height = 2.5)
 fig.fl="output/figures/main/FIG1/FIG1C_PNK_VS_Untreated_BOXPLOT.pdf"
 g <- ggplot(all.star.aln.dt.annot.filt.feat.tot.TruSeq.cast.remelt[!is.na(Modification) & Modification%in%c("5p-phosphorylation", "3p-phosphorylation", "None")], aes(y=CPM, x=Modification, pos=Treatment)) + 
   geom_boxplot(size=0.25, width=0.5, aes(fill=Treatment), outlier.colour = NA) + 
@@ -189,12 +160,7 @@ compare_means(CPM~Treatment, data = all.star.aln.dt.annot.filt.feat.tot.TruSeq.c
 all.star.aln.dt.annot.filt.feat.tot.TruSeq.cast.remelt[, median(CPM), by=.(Treatment, Modification)]
 
 # Summarize libs for pub ----
-ggplot(all.star.aln.dt.annot.filt.feat.tot.TruSeq.cast, aes(x=log2(PNKheat.count+1), color=Modification)) + stat_ecdf()
-ggplot(all.star.aln.dt.annot.filt.feat.tot.TruSeq.cast, aes(x=log2(Untreated.count+1), color=Modification)) + stat_ecdf()
-
-
 fwrite(all.star.aln.dt.annot.filt.feat.tot.TruSeq.cast, file = "20181125_PNK_VS_UNTREATED_TruSeq_SynthPool_counts.txt", sep="\t", quote=FALSE, row.names=FALSE, col.names=TRUE)
 
 all.star.aln.dt.annot.filt.feat.tot.TruSeq.cast.geo <- subset(all.star.aln.dt.annot.filt.feat.tot.TruSeq.cast, select=Hmisc::Cs(Pool.SeqID, Pool.SeqLen, Modification, PNKheat.count, Untreated.count, PNK.cpm.totAligned, Untreated.cpm.totAligned))
-
-fwrite(all.star.aln.dt.annot.filt.feat.tot.TruSeq.cast.geo, file = "../2019_EMBO_GEO_SUBMISSION/SYNTHETIC/PNK_VS_UNTREATED_TruSeq_SynthPool_counts.txt", sep="\t", quote=FALSE, row.names=FALSE, col.names=TRUE)
+fwrite(all.star.aln.dt.annot.filt.feat.tot.TruSeq.cast.geo, file = "./output/2019_EMBO_GEO_SUBMISSION/SYNTHETIC/PNK_VS_UNTREATED_TruSeq_SynthPool_counts.txt", sep="\t", quote=FALSE, row.names=FALSE, col.names=TRUE)
