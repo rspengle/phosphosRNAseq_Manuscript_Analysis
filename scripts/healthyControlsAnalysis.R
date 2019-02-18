@@ -711,7 +711,7 @@ reads.dt1 <- foverlaps(gr.reduce.dt, reads.dt1, verbose = TRUE)
 #reads.dt1.annot[!c("Exon", "Intron"), `:=`(ol.txid=transcriptId, ol.geneid=geneId)]
 
 # Annotation V2 ----
-library(RCAS)
+
 #gtf.loc="/data/genomic_data/Homo_sapiens/UCSC/GRCh38/ANNOTATIONS/GENCODE/v27/gencode.v27.primary_assembly.annotation.gtf"
 gtf.loc="/data/genomic_data/Homo_sapiens/UCSC/GRCh38/ANNOTATIONS/GENCODE/v27/gencode.v27.basic.annotation.gtf"
 gtf.tmp <- paste0("/dev/shm/", basename(gtf.loc))
@@ -999,7 +999,6 @@ stage.split.gene.quant.all.gene[, perc.repeat.bin:=cut(percent.mapping.repeats, 
 
 stage.split.gene.quant.all.gene[, decile.expr:=factor(dplyr::ntile(-median.cpm.ALL, 10)), by=.(PNK, thru.stage, variable, rep.map.category)]
 
-library(cowplot)
 # FIG 2C Percent Repeats By Stage median ----
 g <- ggplot(stage.split.gene.quant.all.gene[n.samples.expressed>1], aes(y=median.cpm.ALL, color=PNK, x=percent.mapping.repeats)) + 
   geom_point(alpha=0.4, size=0.1) + 
@@ -1173,7 +1172,7 @@ s.m.read.feat.group.all.uniqmap <- sparseM.from.dt(reads.dt1.annot.all.uniqmap.s
 s.m.read.feat.group.all.uniqmap.ig <- to.igraph(s.m.read.feat.group.all.uniqmap)
 s.m.read.feat.group.all.uniqmap.cp <- crossprod(s.m.read.feat.group.all.uniqmap)
 
-library(arules)
+
 s.m.read.feat.group.all.uniqmap.ngc <- as(s.m.read.feat.group.all.uniqmap, "ngCMatrix")
 s.im.x <- as(t(s.m.read.feat.group.all.uniqmap.ngc), "transactions")
 ident.set.id.x <- .Call(arules:::R_pnindex, s.im.x@data, NULL, FALSE)
@@ -1185,9 +1184,7 @@ feature.type.simple.orient.m <- crossprod(sparseM.from.dt(reads.dt1.annot.all.un
 
 
 # Guitar analysis ----
-library(Guitar)
-library(csaw)
-library(annotatr)
+
 gencode.biotypes.groups <- fread("./data/biotypes_annot.txt", header=FALSE)
 setnames(gencode.biotypes.groups, c("gene.or.trx", "group", "biotype"))
 tx.db.file <- "./data/TxDb.Hsapiens.Gencode27.GRCh38.basic"
@@ -1527,10 +1524,6 @@ feat.ol.thru3.incidence.m.list2 <- lapply(sample.ids,
 
 
 
-library(gmodels)
-library(MASS)
-library(ca)
-
 features.all.l <- data.table(features.l1 = c("lncRNA.promoters", "mRNA.promoters", "lncRNA.exons", "lncRNA.introns", "mRNA.introns", "mRNA.fiveUTRs", "mRNA.cds", "mRNA.threeUTRs"),
                              features.l2 = c("lncRNA.promoters", "mRNA.promoters", "lncRNA.exons", "lncRNA.introns", "mRNA.introns", "mRNA.exons", "mRNA.exons", "mRNA.exons"),
                              features.l3 = c("lncRNA.promoters", "mRNA.promoters", "lncRNA.transcripts", "lncRNA.transcripts", "mRNA.transcripts", "mRNA.transcripts", "mRNA.transcripts", "mRNA.transcripts"))
@@ -1704,7 +1697,7 @@ reads.dt1.sample.counts.thru3.featol.typesum.combn.count.lvlsuniq[, perc.S:=S/fe
 reads.dt1.sample.counts.thru3.featol.typesum.combn.count.lvlsuniq.long <- reads.dt1.sample.counts.thru3.featol.typesum.combn.count.lvls[PNK=="PNK" & n.feat.types.read.simple==1, .(combn.count=sum(combn.count)), by=.(feat.type.grp , RNA.family , feat.struct , Sample.ID , PNK , n.feat.types.read.simple , feat.type.count.all.combn.at.numfeat.types, read.orient)]
 reads.dt1.sample.counts.thru3.featol.typesum.combn.count.lvlsuniq.long[, tot.uniqannot.sample:=sum(combn.count), by=.(Sample.ID, RNA.family)]
 
-library(ggpubr)
+
 setorder(reads.dt1.sample.counts.thru3.featol.typesum.combn.count.lvlsuniq.long, feat.type.grp, RNA.family, feat.struct, read.orient, Sample.ID)
 reads.dt1.sample.counts.thru3.featol.typesum.combn.count.lvlsuniq.long[, perc.combn.count:=combn.count/feat.type.count.all.combn.at.numfeat.types ]
 p <- ggboxplot(reads.dt1.sample.counts.thru3.featol.typesum.combn.count.lvlsuniq.long, x = "feat.struct", y = "perc.combn.count",
@@ -1978,9 +1971,7 @@ reads.dt1.sample.counts.thru1.sum.featol.typesum.long[reads.dt1.sample.counts.th
 
 # look at the lncRNA promoter reads
 as.gene <- reads.dt1.sample.counts.thru3.sum.featol[feat.type.grp=="lncRNA.promoters" & same.orient==FALSE & transcript_type=="antisense_RNA", lapply(.SD, sum), by=.(tx_name, gene_name, transcript_type, participant.ID, PNK, Sample.ID), .SDcols=sum.cols][, lapply(.SD, mean), by=.(tx_name, gene_name, transcript_type, PNK), .SDcols=sum.cols][order(-sample.num.uniq.reads.OQ)]$gene_name[1]
-library(ggbio)
-library(biovizBase)
-library(Gviz)
+
 gene.ranges <- reduce(txdbFeatures.dt.c[gene_name==as.gene, GRanges(seqnames, IRanges(start, end), strand=strand, seqinfo=seqinfo(txdb.gencode))])
 as.gene.tx <- biovizBase::crunch(txdb.gencode, which=gene.ranges)
 colnames(values(as.gene.tx))[4] <- "model"
@@ -2422,7 +2413,7 @@ g <- ggplot(excerpt.counts.melt.sum.merge.repquant.f[cpm.rank.by.feat<=50, ], ae
   ggbeeswarm::geom_quasirandom(dodge.width = 0.8, alpha=0.7, size=0.2, aes( group=thru.stage.f, color=CPM.rank.atStage.group)) + scale_colour_ordinal(direction = -1) +
   scale_y_log10(breaks=10^seq(0,6,1), labels = scales::trans_format("log10", scales::math_format())) + 
   theme_bw(base_size = 6) + labs(x=NULL, y="Read Count", color="Gene Rank")
-library(cowplot)    
+ 
 g1 <- g + theme(legend.position = "bottom", axis.text = element_text(size=6)) ; g1
 
 save_plot(filename = "./output/figures/main/FIG3A_Top50_ExcerPt_though_filter_legend_protein_coding.pdf",  plot = g1, base_height = 75, base_width = 75, units="mm")
