@@ -38,17 +38,29 @@ setDTthreads(20) # sets numer of threads to use with data.table. Change to numbe
 
 # Load raw data ----
 base.dir="./data/Plasma/healthyControlsAnalysis/biofragmenta-v1.5_20180220_103636"
-sample.basenames.file <- dir(paste0(base.dir, "/02b-star_alignment_all"), pattern = "new_file_bn.tmp", full.names=TRUE)
+sample.info.rdata.file <- "ALL.SAMPLE.INFO"
+alignment.output.dir <- paste0(base.dir, "/02b-star_alignment_all")
+sample.basenames.file <- dir(alignment.output.dir, pattern = "new_file_bn.tmp", full.names=TRUE)
+load(sample.info.rdata.file)
 
-
-
+# Gather all bam files from the subdirectories in base.dir. Bam files named and listed by subdir
 bamfiles.list <- sapply(dir(base.dir, full.names=TRUE, include.dirs=TRUE, recursive=FALSE), dir, pattern="*bam$", full.names=TRUE)
 bamfiles.list <- bamfiles.list[sapply(bamfiles.list, length)>0]
 names(bamfiles.list) <- basename(names(bamfiles.list))
+
+
+
+
+
+
+# OLD ----
+
+
+
 #bamfiles.list.dt <- rbindlist(lapply(seq_along(bamfiles.list), FUN=function(X){ lst <- bamfiles.list[[X]]; data.table(dirname=rep(basename(names(bamfiles.list)[X]), length(lst)), file=lst)}))
 
 #Sys.setenv(TCL_LIBRARY="/home/ryanspen/miniconda3/envs/BioSandbox/lib/R/share/tcl8.6")
-load("ALL.SAMPLE.INFO")
+
 # Functions ----
 flag <- scanBamFlag(isSecondaryAlignment = FALSE)
 what.info <- c("qname","rname", "strand", "pos", "qwidth", "seq", "cigar", "seq")
@@ -1618,7 +1630,7 @@ ggplot(reads.dt1.sample.counts.thru3.featol.typesum.combn.count.lvls[read.orient
 # The first positoins shows unambiguous annotaitons to the same feature type. 
 
 reads.dt1.sample.counts.thru3.featol.typesum.combn.count.lvls[, n.feat.types.read.simple:=factor(ifelse(n.feat.types.read>2, ">2", as.character(n.feat.types.read)), levels=c("1", "2", ">2"))]
-ggplot(reads.dt1.sample.counts.thru3.featol.typesum.combn.count.lvls[PNK=="PNK", .(combn.count=sum(combn.count)/feat.type.count.all.combn), 
+g <- ggplot(reads.dt1.sample.counts.thru3.featol.typesum.combn.count.lvls[PNK=="PNK", .(combn.count=sum(combn.count)/feat.type.count.all.combn), 
                                                                      by=.(feat.type.grp, RNA.family, feat.struct, Sample.ID, PNK, read.orient, n.feat.types.read, feat.type.count.all.combn)], 
        aes(x=factor(n.feat.types.read),
            y=combn.count, 
@@ -1634,11 +1646,11 @@ ggplot(reads.dt1.sample.counts.thru3.featol.typesum.combn.count.lvls[PNK=="PNK",
         strip.text=element_text(),
         text = element_text(color="black"),
         legend.direction = "horizontal") 
-ggsave(filename = "PNK_Read_Percent_By_Num_Features.png", width = 6, height=5, units = "in")  
+ggsave(plot = g, filename = "PNK_Read_Percent_By_Num_Features.png", width = 6, height=5, units = "in")  
 
 # SUPPL FIG 4A Gene S/AS Mapping ----
 # Simplify to >2 
-ggplot(reads.dt1.sample.counts.thru3.featol.typesum.combn.count.lvls[PNK=="PNK", .(combn.count=sum(combn.count)/feat.type.count.all.combn), 
+g <- ggplot(reads.dt1.sample.counts.thru3.featol.typesum.combn.count.lvls[PNK=="PNK", .(combn.count=sum(combn.count)/feat.type.count.all.combn), 
                                                                      by=.(feat.type.grp, RNA.family, feat.struct, Sample.ID, PNK, read.orient, n.feat.types.read.simple, feat.type.count.all.combn)], 
        aes(x=n.feat.types.read.simple,
            y=combn.count, 
@@ -1654,7 +1666,7 @@ ggplot(reads.dt1.sample.counts.thru3.featol.typesum.combn.count.lvls[PNK=="PNK",
         panel.grid=element_blank(),
         text = element_text(color="black"),
         legend.direction = "horizontal") 
-ggsave(filename = "./output/figures/main/FIG4ASUPPLEMENT_PNK_Read_Percent_By_Num_Features_Simple.png", width = 7, height=5, units = "in")  
+ggsave(plot = g , filename = "./output/figures/main/FIG4ASUPPLEMENT_PNK_Read_Percent_By_Num_Features_Simple.png", width = 7, height=5, units = "in")  
 
 # FIG 4A Gene S/AS Mapping ----
 g <- ggplot(reads.dt1.sample.counts.thru3.featol.typesum.combn.count.lvls[PNK=="PNK" & n.feat.types.read.simple==1, .(combn.count=sum(combn.count)/feat.type.count.all.combn), 
@@ -1673,13 +1685,13 @@ g +  theme(legend.position = "top",
            panel.grid=element_blank(),
            text = element_text(color="black"),
            legend.direction = "horizontal", axis.text=element_text(size=6)) 
-ggsave(filename = "./output/figures/main/FIG4A_PNK_Read_Percent_By_Num_Features_Simple_LEGEND.pdf", width = 75, height=50, units = "mm")  
+ggsave(plot = g,filename = "./output/figures/main/FIG4A_PNK_Read_Percent_By_Num_Features_Simple_LEGEND.pdf", width = 75, height=50, units = "mm")  
 g +  theme(legend.position = "none", 
            panel.grid=element_blank(),
            text = element_text(color="black"),
            legend.direction = "horizontal", axis.text=element_text(size=6)) 
 
-ggsave(filename = "./output/figures/main/FIG4A_PNK_Read_Percent_By_Num_Features_Simple_NOLEGEND.pdf", width = 80, height=50, units = "mm")  
+ggsave(plot = g,filename = "./output/figures/main/FIG4A_PNK_Read_Percent_By_Num_Features_Simple_NOLEGEND.pdf", width = 80, height=50, units = "mm")  
 
 # 2019-27-01 FIG 4A Gene S/AS Mapping Update -- show as % of uniquely-mapped only ----
 
@@ -1762,17 +1774,17 @@ g +  theme(legend.position = "top",
            panel.grid=element_blank(),
            text = element_text(color="black"),
            legend.direction = "horizontal", axis.text=element_text(size=6)) 
-ggsave(filename = "./output/figures/main/FIG4A_PNK_Read_Percent_By_Unambig_Num_Features_Simple_LEGEND.pdf", width = 75, height=50, units = "mm")  
+ggsave(plot = g,filename = "./output/figures/main/FIG4A_PNK_Read_Percent_By_Unambig_Num_Features_Simple_LEGEND.pdf", width = 75, height=50, units = "mm")  
 g +  theme(legend.position = "none", 
            panel.grid=element_blank(),
            text = element_text(color="black"),
            legend.direction = "horizontal", axis.text=element_text(size=6)) 
 
-ggsave(filename = "./output/figures/main/FIG4A_PNK_Read_Percent_By_Unambig_Num_Features_Simple_NOLEGEND.pdf", width = 80, height=50, units = "mm")  
+ggsave(plot = g,filename = "./output/figures/main/FIG4A_PNK_Read_Percent_By_Unambig_Num_Features_Simple_NOLEGEND.pdf", width = 80, height=50, units = "mm")  
 
 
 
-ggplot(reads.dt1.sample.counts.thru3.featol.typesum.combn.count.lvls[PNK!="PNK", .(combn.count=sum(combn.count)), 
+g <- ggplot(reads.dt1.sample.counts.thru3.featol.typesum.combn.count.lvls[PNK!="PNK", .(combn.count=sum(combn.count)), 
                                                                      by=.(feat.type.grp, RNA.family, feat.struct, Sample.ID, PNK, read.orient, n.feat.types.read, feat.type.count.all.combn)], 
        aes(x=factor(n.feat.types.read),
            y=combn.count/feat.type.count.all.combn, 
@@ -1788,11 +1800,11 @@ ggplot(reads.dt1.sample.counts.thru3.featol.typesum.combn.count.lvls[PNK!="PNK",
         strip.text=element_text(),
         text = element_text(color="black"),
         legend.direction = "horizontal") 
-ggsave(filename = "NOPNK_Read_Percent_By_Num_Features.png", width = 6, height=5, units = "in")  
+ggsave(plot = g,filename = "NOPNK_Read_Percent_By_Num_Features.png", width = 6, height=5, units = "in")  
 
 
 # Simplify to >2
-ggplot(reads.dt1.sample.counts.thru3.featol.typesum.combn.count.lvls[PNK=="NoPNK", .(combn.count=sum(combn.count)/feat.type.count.all.combn), 
+g <- ggplot(reads.dt1.sample.counts.thru3.featol.typesum.combn.count.lvls[PNK=="NoPNK", .(combn.count=sum(combn.count)/feat.type.count.all.combn), 
                                                                      by=.(feat.type.grp, RNA.family, feat.struct, Sample.ID, PNK, read.orient, n.feat.types.read.simple, feat.type.count.all.combn)], 
        aes(x=n.feat.types.read.simple,
            y=combn.count, 
@@ -1808,7 +1820,7 @@ ggplot(reads.dt1.sample.counts.thru3.featol.typesum.combn.count.lvls[PNK=="NoPNK
         strip.text=element_text(),
         text = element_text(color="black"),
         legend.direction = "horizontal") 
-ggsave(filename = "NOPNK_Read_Percent_By_Num_Features_Simple.png", width = 7, height=5, units = "in")  
+ggsave(plot = g,filename = "NOPNK_Read_Percent_By_Num_Features_Simple.png", width = 7, height=5, units = "in")  
 
 
 
@@ -1836,9 +1848,9 @@ g <- ggplot(reads.dt1.sample.counts.thru3.featol.typesum.combn.count.lvls.pairs,
         strip.text=element_text(),
         text = element_text(color="black"),
         legend.direction = "horizontal"); g + labs(title="PNK (+)") %+% reads.dt1.sample.counts.thru3.featol.typesum.combn.count.lvls.pairs[PNK=="PNK"]
-ggsave(filename = "PNK_Read_Percent_By_PairedAmbig_Features.png", width = 6, height=5, units = "in")  
+ggsave(plot = g,filename = "PNK_Read_Percent_By_PairedAmbig_Features.png", width = 6, height=5, units = "in")  
 g  + labs(title="PNK (-)") %+% reads.dt1.sample.counts.thru3.featol.typesum.combn.count.lvls.pairs[PNK!="PNK"]
-ggsave(filename = "NoPNK_Read_Percent_By_PairedAmbig_Features.png", width = 6, height=5, units = "in")  
+ggsave(plot = g,filename = "NoPNK_Read_Percent_By_PairedAmbig_Features.png", width = 6, height=5, units = "in")  
 
 test.m.read.cp.comp <- dcast.data.table(test.m.read.cp, feat.type.grp1+feat.type.grp2+same.orient2~same.orient1, value.var = "value", fun.aggregate = sum, fill=0)
 setnames(test.m.read.cp.comp, c("FALSE", "TRUE"), c("FALSE.pair", "TRUE.pair"))
@@ -2413,14 +2425,14 @@ g <- ggplot(excerpt.counts.melt.sum.merge.repquant.f[cpm.rank.by.feat<=50, ], ae
 library(cowplot)    
 g1 <- g + theme(legend.position = "bottom", axis.text = element_text(size=6)) ; g1
 
-save_plot(filename = "./output/figures/main/FIG3A_Top50_ExcerPt_though_filter_legend_protein_coding.pdf", g1, base_height = 75, base_width = 75, units="mm")
+save_plot(filename = "./output/figures/main/FIG3A_Top50_ExcerPt_though_filter_legend_protein_coding.pdf",  plot = g1, base_height = 75, base_width = 75, units="mm")
 
 g1 <- g +theme(legend.position = "none", panel.grid = element_blank() , axis.text = element_text(size=6)) ; g1
 
-save_plot(filename = "./output/figures/main/FIG3A_Top50_ExcerPt_though_filter_NOlegend_protein_coding.pdf", g1, base_height = 40, base_width = 50, units="mm")
+save_plot(filename = "./output/figures/main/FIG3A_Top50_ExcerPt_though_filter_NOlegend_protein_coding.pdf",  plot = g1, base_height = 40, base_width = 50, units="mm")
 p <- ggboxplot(excerpt.counts.melt.sum.merge.repquant.f[cpm.rank.by.feat<=50, ], x = "thru.stage.f", y = "ALL.p1", color = "thru.stage.f", palette = "npg", add = "jitter", facet.by = "PNK") + scale_y_log10(breaks=10^seq(-1,6,1)) + theme(text=element_text(size=6, colour="black"))
 p2 <- p + stat_compare_means(aes(group = thru.stage.f,  y = CPM.rank.atStage), paired=TRUE, size=1, ref.group = "thru.1")
-save_plot(filename = "./output/figures/main/FIG3A_Top50_ExcerPt_though_filter_legend_protein_coding_wilcox.pdf", p2)
+save_plot(filename = "./output/figures/main/FIG3A_Top50_ExcerPt_though_filter_legend_protein_coding_wilcox.pdf", plot = p2)
 
 #PNK thru.stage.f (0,50] (50,500] (500,5e+03] (5e+03,5e+04]
 #1: NoPNK       thru.1     29       10           7             2
@@ -2551,7 +2563,7 @@ ggplot(reads.dt1.sample.counts.all.aligns.from.exon.aligned[thru.biofrag.stage==
 
 # FIG 4B. Read length distribution for exonic reads ----
 g <- ggplot(reads.dt1.sample.counts.all.aligns.from.exon.aligned[thru.biofrag.stage==3 & PNK=="PNK", .N, by=.(origSequence, qwidth, Sample.ID, PNK, sample.read.count)][, .(count=sum(sample.read.count)), by=.(qwidth, Sample.ID, PNK)][ , percent.tot:=count/sum(count), by=Sample.ID][], aes(x=qwidth, y=percent.tot)) + geom_point(size=0.1, alpha=0.7) + stat_smooth(span=0.25, size=0.5, fullrange = FALSE) + theme_bw(base_size = 6) + scale_x_continuous(breaks=seq(0,80,5)) + scale_y_continuous(label=scales::percent, breaks = seq(-1, 1, by = 0.01)) + labs(y="Unique mRNA Exon-mapped reads\n(% total exon-mapped", x="Fragment Length (nt)") + theme(legend.position = "top", panel.grid = element_blank(), axis.text=element_text(size=6))
-save_plot(plot = g, filename = "./output/figures/main/FIG4B_ReadLengthDistrPNK.pdf", base_height = 50, base_width = 75, units="mm")
+save_plot(filename = "./output/figures/main/FIG4B_ReadLengthDistrPNK.pdf", plot = g, base_height = 50, base_width = 75, units="mm")
 
 # Read length distribution by gene ----
 pnk.genes.thru3.for.lengths <- reads.dt1.exon.ol[thru.biofrag.stage==3 & overlaps.sRNA.indir==0 & PNK=="PNK", .(sample.read.count=sample.read.count[1]), by=.(origSequence, participant.ID, gene_name, qwidth)]
@@ -2578,7 +2590,7 @@ g <- ggplot(top.gene.lengths.plot, aes(x=gene_name.f, y=qwidth)) +
   coord_flip() + 
   theme_bw(base_size = 6) + theme(panel.grid = element_blank(), axis.text=element_text(size=6)) +
   labs(x="Top 50 Expressed Genes", y="Read Length")
-save_plot(plot = g, filename = "./output/figures/main/FIG4B_ALT_ReadLengthDistrPNK_Top50Genes.pdf", base_height = 100, base_width = 75, units="mm")
+save_plot(filename = "./output/figures/main/FIG4B_ALT_ReadLengthDistrPNK_Top50Genes.pdf", plot = g, base_height = 100, base_width = 75, units="mm")
 
 
 # Fig 4C Abundance VS number of individuals ----
@@ -2589,7 +2601,7 @@ ggplot(pnk.genes.thru3.for.lengths.sum.tot, aes(x=factor(n.individuals.expressed
 g <- ggplot(pnk.genes.thru3.for.lengths.sum.tot, aes(x=factor(n.individuals.expressed), y=tot.gene.count/n.individuals.expressed)) + 
   geom_violin(draw_quantiles = c(0.25, 0.5, 0.75), size=0.25, fill="grey") + 
   scale_y_log10() + labs(x="# Participants Detected", y="gene abundance (mean read counts)") + theme_bw(base_size = 6) + theme(panel.grid = element_blank(), axis.text=element_text(size=6))
-save_plot(plot = g, filename = "./output/figures/main/FIG4C_Gene_Abundance_VS_Individuals_Detected.pdf", base_height = 50, base_width = 60, units="mm")
+save_plot(filename = "./output/figures/main/FIG4C_Gene_Abundance_VS_Individuals_Detected.pdf", plot = g, base_height = 50, base_width = 60, units="mm")
 
 
 
