@@ -38,7 +38,7 @@ library(Gviz)
 library(MASS)
 library(RCAS)
 library(vcd)
-
+library(rlang)
 # Set global options ----
 setDTthreads(10) # sets numer of threads to use with data.table. Change to number suitible for your machine
 
@@ -56,11 +56,11 @@ source(helper.scripts.file)
 sample.info.rdata.file <- "./data/Plasma/healthyControlsAnalysis/ALL.SAMPLE.INFO"
 base.dir="./data/Plasma/healthyControlsAnalysis/biofragmenta-v1.5_20180220_103636"
 alignment.output.dir <- paste0(base.dir, "/02b-star_alignment_all")
-tx.db.file <- "./data/annotations/TxDb.Hsapiens.Gencode27.GRCh38.primaryAssembly"
 repeat.file <- "./data/annotations/hg38_miscRNA_and_rmsk.bed"
-
-
-
+gtf.loc="./data/annotations/gencode.v27.basic.annotation.gtf"
+gtf.full.loc="./data/annotations/gencode.v27.primary_assembly.annotation.gtf"
+gencode.biotypes.fl <- "./data/annotations/biotypes_annot.txt"
+tx.db.file <- "./data/annotations/TxDb.Hsapiens.Gencode27.GRCh38.basic"
 
 # Raw reads
 contam.dir <- paste0(base.dir, "/02-map_contaminates")
@@ -69,7 +69,7 @@ processed.fasta.files <- dir(contam.dir, pattern="*Processed.fa", full.names=TRU
 #  Bam files named and listed by subdir.
 bamfiles.list <- sapply(dir(base.dir, full.names=TRUE, include.dirs=TRUE, recursive=FALSE), dir, pattern="*bam$", full.names=TRUE)
 # Remove files that don't have a ".bai" index file
-bamfiles.list <- sapply(bamfiles.list, USE.NAMES = TRUE, simplify=FALSE, function(x) x[file.exists(paste0(x, ".bai"))])
+bamfiles.list <- sapply(bamfiles.list, USE.NAMES = TRUE, simplify=FALSE, function(x) BamFileList(x[file.exists(paste0(x, ".bai"))]))
 bamfiles.list <- bamfiles.list[sapply(bamfiles.list, length)>0]
 bamfiles.path.list <- names(bamfiles.list)
 names(bamfiles.list) <- basename(names(bamfiles.list))
@@ -117,44 +117,54 @@ read.count.fa.dt[, read.ID:=NULL]
 # Remove secondary alignments and convert to data table
 reads.dt1 <- bam.to.dt.f(unfilt.bam.file, bam.params = param)
 reads.dt1[, c("origSequence", "nSamples.detected", "tot.count"):=tstrsplit(qname, split="-", fixed=TRUE)]
-reads.dt1.copy <- copy(reads.dt1)
 uniq.read.ids.unfilt <- reads.dt1[, .N, by=.(qname, origSequence, nSamples.detected, tot.count)]
 
-# Import bam alignments after first contaminate filtering  (STAGE 2) ----
-reads.dt2.list <- lapply(bamfiles.list[["04-split_readgroups"]], 
-                         FUN=function(fl){
-                           dirnm <- dirname(fl)
-                           bn <- gsub("_rRNA-filtered_aligned_genome.*", "", basename(fl))
-                           ga <- readGAlignments(fl, param = param)
-                           mcols(ga)$File.Base.ID2 <- bn
-                           mcols(ga)$dirnm <- basename(dirnm)
-                           return(ga)
-                         })
-reads.dt2.gr <- do.call(c, reads.dt2.list)
-reads.dt2 <- as.data.table(reads.dt2.gr)
-setnames(reads.dt2, "qname", "read.ID")
 
-# Import bam alignments after second contaminate filtering  (STAGE 3)----
-reads.dt3.list <- lapply(bamfiles.list[["05-filtered"]], 
-                         FUN=function(fl){
-                           dirnm <- dirname(fl)
-                           bn <- gsub("_rRNA-filtered_aligned_genome.*", "", basename(fl))
-                           ga <- readGAlignments(fl, param = param)
-                           mcols(ga)$File.Base.ID2 <- bn
-                           mcols(ga)$dirnm <- basename(dirnm)
-                           return(ga)
-                         })
-reads.dt3.gr <- do.call(c, reads.dt3.list)
-reads.dt3 <- as.data.table(reads.dt3.gr)
-setnames(reads.dt3, "qname", "read.ID")
+testgr <- readGAlignments(bamfiles.list[["05-filtered"]][[1]], param=param)
+testgrc <- copy(testgr)
 
-# Combine the reads together
-reads.dt23 <- rbind(reads.dt2, reads.dt3)
-rm(reads.dt2)
-rm(reads.dt3)
-rm(list = c("reads.dt2.gr", "reads.dt3.gr"))
-setnames(reads.dt23, "seq", "origSequence")
-setkey(reads.dt23, origSequence, dirnm, File.Base.ID2)
+testgr2 <- unlist(testgr, recursive = FALSE)
+setDT(testgr2)
+
+reads.dt23 <- local2({
+  # Import bam alignments after first contaminate filtering  (STAGE 2) ----
+  reads.dt2 <- rbindlist(lapply(bamfiles.list[["04-split_readgroups"]], 
+                           FUN=function(fl){
+                             dirnm <- dirname(fl)
+                             bn <- gsub("_rRNA-filtered_aligned_genome.*", "", basename(fl))
+                             ga <- as.data.table(readGAlignments(fl, param = param))
+                             #mcols(ga)$File.Base.ID2 <- bn
+                             #mcols(ga)$dirnm <- basename(dirnm)
+                             ga[, `:=`(File.Base.ID2=bn, dirnm=basename(dirnm))]
+                             setnames(ga, "qname", "read.ID")
+                             return(ga)}))
+  
+  #reads.dt2.gr <- do.call(c, reads.dt2.list)
+  #reads.dt2 <- as.data.table(reads.dt2.gr)
+  #setnames(reads.dt2, "qname", "read.ID")
+  
+  # Import bam alignments after second contaminate filtering  (STAGE 3)----
+  reads.dt3 <- rbindlist(lapply(bamfiles.list[["05-filtered"]], 
+                                              FUN=function(fl){
+                                                dirnm <- dirname(fl)
+                                                bn <- gsub("_rRNA-filtered_aligned_genome.*", "", basename(fl))
+                                                ga <- as.data.table(readGAlignments(fl, param = param))
+                                                #mcols(ga)$File.Base.ID2 <- bn
+                                                #mcols(ga)$dirnm <- basename(dirnm)
+                                                ga[, `:=`(File.Base.ID2=bn, dirnm=basename(dirnm))]
+                                                setnames(ga, "qname", "read.ID")
+                                                return(ga)}))
+  #reads.dt3.gr <- do.call(c, reads.dt3.list)
+  #reads.dt3 <- as.data.table(reads.dt3.gr)
+  #setnames(reads.dt3, "qname", "read.ID")
+  
+  # Combine the reads together
+  reads.dt23 <- rbind(reads.dt2, reads.dt3)
+  #rm(list = c("reads.dt2", "reads.dt3", "reads.dt2.gr", "reads.dt3.gr"))
+  setnames(reads.dt23, "seq", "origSequence")
+  setkey(reads.dt23, origSequence, dirnm, File.Base.ID2)
+  reads.dt23
+})
 
 uniq.read.count <- reads.dt23[, .N, by=.(origSequence, dirnm, File.Base.ID2, read.ID)][, .(uniq.read.count=.N), by=.(origSequence, dirnm, File.Base.ID2)]
 read.detected.in.filt.set <- dcast.data.table(uniq.read.count, origSequence~dirnm, fill=0, value.var = "uniq.read.count", fun.aggregate = sum)
@@ -202,7 +212,7 @@ gr.reduce.dt[, overlappingQuery:=paste(seqnames, start, end, strand, sep=":")]
 mcols(gr.reduce) <- gr.reduce.dt$overlappingQuery
 setkey(gr.reduce.dt, seqnames, strand, start, end)
 setkey(reads.dt1, seqnames, strand, start, end)
-reads.dt1 <- foverlaps(gr.reduce.dt, reads.dt1, verbose = TRUE)
+reads.dt1c <- foverlaps(gr.reduce.dt, reads.dt1, verbose = TRUE)
 
 
 
@@ -224,12 +234,7 @@ read.count.fa.dt <- fread(read.count.fa.dt.fl, header=TRUE, sep="\t")
 
 # Annotation V2 ----
 
-gtf.loc="/data/genomic_data/Homo_sapiens/UCSC/GRCh38/ANNOTATIONS/GENCODE/v27/gencode.v27.basic.annotation.gtf"
-gtf.tmp <- paste0("/dev/shm/", basename(gtf.loc))
-if(!file.exists(gtf.tmp)){
-  system(paste0("cp ", gtf.loc, " ", gtf.tmp))
-}
-gtf <- importGtf(gtf.tmp)
+gtf <- importGtf(gtf.loc)
 txdbFeatures <- getTxdbFeaturesFromGRanges(gtf)
 txdbFeatures.dt <- lapply(txdbFeatures, FUN=function(x){dt <- as.data.table(x); setkey(dt, seqnames, strand, start, end)})
 
@@ -277,7 +282,6 @@ overlaps2.filt[, gene_type_orient:=paste0(gene_type, ".", aln.orientation)]
 setkey(reads.dt1, origSequence)
 setkey(read.count.fa.dt, origSequence, File.Base.ID2)
 
-
 read.count.fa.dt[, tot.count.sample:=sum(sample.read.count), by=File.Base.ID2]
 read.count.fa.dt[, tot.uniq.count.sample:=.N, by=File.Base.ID2]
 sample.replicate.count.totals <- read.count.fa.dt[, .(tot.count.sample.repl=tot.count.sample[1], tot.uniq.count.sample.repl=tot.uniq.count.sample[1]), by=.(File.Base.ID2, Sample.Repl.ID, Sample.ID, PNK)]
@@ -304,7 +308,6 @@ keep.cols.v <- c("seqnames", "strand", "start", "end", "overlappingQuery", "part
 reads.dt1.sample.counts.thru1.sum <- OQ.summary.f(reads.dt1.sample.counts, keep.cols.v)
 reads.dt1.sample.counts.thru2.sum <- OQ.summary.f(reads.dt1.sample.counts.thru2, keep.cols.v)
 reads.dt1.sample.counts.thru3.sum <- OQ.summary.f(reads.dt1.sample.counts.thru3, keep.cols.v)
-
 
 
 # Save summary counts files
@@ -340,20 +343,11 @@ setorder(feat.means, -V1)
 queryRegionsSum.melt.f[, feat.f:=factor(feat, levels=feat.means$feat)]
 
 queryRegionsSum.melt.f[, thru.biofrag.stage:=as.factor(thru.biofrag.stage)]
-g <- ggplot2::ggplot(queryRegionsSum.melt.f, aes(x = feat.f, y = percent.total)) + 
-  geom_boxplot(aes(fill = same.orient), pos="dodge") +  
-  theme_bw(base_size = 14) + 
-  theme(axis.text.x = element_text(angle = 90), legend.pos="top") + facet_grid(paste0("Step", thru.biofrag.stage)~PNK)
-
-g %+% queryRegionsSum.melt.f[measurement=="sample.read.count.OQ"]
 
 
 # Get protein-coding exon/link-RNA reads and then see the corrsponding ovrlap types ----
 mRNA.linRNA.exon.features.dt <- copy(mRNA.lincRNA.txdbFeatures.dt[["exons"]])
 all.exon.features.dt <- copy(txdbFeatures.dt[["exons"]])
-
-
-
 setkey(reads.dt1.sample.counts, seqnames, strand, start, end)
 setkey(mRNA.linRNA.exon.features.dt, seqnames, strand, start, end)
 setnames(reads.dt1.sample.counts, c("i.start", "i.end"), c("olQuery.start", "olQuery.end"))
@@ -361,10 +355,7 @@ mRNA.linRNA.exon.ol.thru1 <- foverlaps(reads.dt1.sample.counts, mRNA.linRNA.exon
 setnames(mRNA.linRNA.exon.ol.thru1, c("i.start", "i.end"), c("read.start", "read.end"))
 
 
-
 # Get the reads that overlapped mRNA/lincRNA exons, and pull their original alignments
-
-
 setkey(mRNA.linRNA.exon.ol.thru1, "origSequence")
 mRNA.linRNA.exon.ol.thru1.simple <- subset(mRNA.linRNA.exon.ol.thru1, select=c("origSequence", "tx_name", "gene_name", "exon_id"))
 setkey(mRNA.linRNA.exon.ol.thru1.simple, "origSequence")
@@ -372,10 +363,6 @@ reads.dt1.sample.counts.all.aligns.from.exon.aligned <- reads.dt1.sample.counts[
 setkey(reads.dt1.sample.counts.all.aligns.from.exon.aligned, seqnames, strand, start, end)
 all.alns.mRNA.linRNA.exon.ol.thru1 <- foverlaps(reads.dt1.sample.counts.all.aligns.from.exon.aligned, mRNA.linRNA.exon.features.dt, verbose = TRUE)
 setnames(all.alns.mRNA.linRNA.exon.ol.thru1, c("i.start", "i.end"), c("read.start", "read.end"))
-
-
-
-
 setkey(all.alns.mRNA.linRNA.exon.ol.thru1, seqnames, read.start, read.end)
 all.alns.mRNA.linRNA.exon.ol.thru1.repeats <- foverlaps(all.alns.mRNA.linRNA.exon.ol.thru1, repeat.dt)
 setkey(all.alns.mRNA.linRNA.exon.ol.thru1.repeats, rep.name)
@@ -456,15 +443,11 @@ stage.split.gene.quant.all2[c("median.percent.rep.cis", "wt.mean.percent.rep.cis
 stage.split.gene.quant.all2[c("median.percent.rep.all", "median.percent.rep.cis"), measure:="median", on="variable"]
 stage.split.gene.quant.all2[c("wt.mean.percent.rep.all", "wt.mean.percent.rep.cis"), measure:="wt.mean", on="variable"]
 stage.split.gene.quant.all <- copy(stage.split.gene.quant.all2)
-
 setnames(stage.split.gene.quant.all, "value", "percent.mapping.repeats")
-
-ggplot(stage.split.gene.quant.all, aes(y=median.cpm.ALL, color=PNK, x=percent.mapping.repeats)) + geom_point(alpha=0.3) + facet_grid(rep.map.category+PNK~paste0("Step",thru.stage)) + scale_y_log10() + scale_x_continuous(labels=scales::percent, limits = c(0,1)) + theme_bw() + theme(legend.position = "top")
 
 # Keep only genes with >= 1 count in >= 2 samples
 gene.expressed.count <- all.alns.mRNA.linRNA.exon.ol.thru1.gene.quant.u2[, .(sample.read.count.uniq=1*(max(sample.read.count.uniq)>0)), by=.(Sample.ID, PNK, thru.biofrag.stage, tx_name, gene_name)][, .(n.samples.expressed=sum(sample.read.count.uniq)), by=.(PNK, thru.biofrag.stage, tx_name, gene_name)][, .(n.samples.expressed=max(n.samples.expressed)), by=.(PNK, thru.biofrag.stage, gene_name)]
 setnames(gene.expressed.count, "thru.biofrag.stage", "thru.stage")
-
 
 stage.split.gene.quant.all[, max.cpm.gene:=max(median.cpm.ALL), by=.(PNK, thru.stage, gene_name, variable, rep.map.category)]
 stage.split.gene.quant.all[, max.cpm.gene.wtmean:=max(wt.mean.cpm.ALL), by=.(PNK, thru.stage, gene_name, variable, rep.map.category)]
@@ -474,10 +457,6 @@ stage.split.gene.quant.all.gene[gene.expressed.count, n.samples.expressed:=i.n.s
 
 stage.split.gene.quant.all.gene.mean <- stage.split.gene.quant.all[wt.mean.cpm.ALL==max.cpm.gene.wtmean & rep.map.category=="CISorTRANS" & measure=="wt.mean", .(wt.mean.cpm.ALL=max(wt.mean.cpm.ALL), percent.mapping.repeats=max(percent.mapping.repeats)), by=.(PNK, gene_name, thru.stage, variable, rep.map.category)]
 stage.split.gene.quant.all.gene.mean[gene.expressed.count, n.samples.expressed:=i.n.samples.expressed, on=c("gene_name", "PNK", "thru.stage")]
-
-stage.split.gene.quant.all.gene[, perc.repeat.bin:=cut(percent.mapping.repeats, include.lowest = TRUE, breaks = c(0.0, 0.01, 0.25, 0.5, 0.75, 0.99, 1.0), labels = c("0%", "1-25%", "25-50%", "50-75%", "75-99%", "100%"))]
-
-stage.split.gene.quant.all.gene[, decile.expr:=factor(dplyr::ntile(-median.cpm.ALL, 10)), by=.(PNK, thru.stage, variable, rep.map.category)]
 
 # FIG 2C Percent Repeats By Stage median ----
 g <- ggplot(stage.split.gene.quant.all.gene[n.samples.expressed>1], aes(y=median.cpm.ALL, color=PNK, x=percent.mapping.repeats)) + 
@@ -490,55 +469,7 @@ g <- ggplot(stage.split.gene.quant.all.gene[n.samples.expressed>1], aes(y=median
 out.fl <- "./output/figures/main/FIG2C_PERC_REPEAT_VS_EXPR.pdf"
 save_plot(out.fl, plot = g, base_width = 75, base_height = 80, units="mm")
 
-ggplot(stage.split.gene.quant.all.gene[n.samples.expressed>1], aes(y=median.cpm.ALL, fill=PNK, x=perc.repeat.bin)) + 
-  geom_violin(draw_quantiles = c(0.25, 0.5, 0.75)) +
-  ggbeeswarm::geom_quasirandom(alpha=0.2, size=0.1) + 
-  facet_grid(paste0("Step",thru.stage)~PNK) + 
-  scale_y_log10(limits=c(10^-2,10^5), breaks=10^seq(-2,5), labels = scales::trans_format("log10", scales::math_format())) + 
-  theme_bw(base_size = 6) + 
-  theme(legend.position = "top", axis.ticks = element_line(size=0.5), panel.grid = element_blank(), text = element_text(color="black")) 
-
-
-
-
-
-# FIG 2C Percent Repeats By Stage weighted mean----
-ggplot(stage.split.gene.quant.all.gene.mean[n.samples.expressed>1], aes(y=wt.mean.cpm.ALL, color=PNK, x=percent.mapping.repeats)) + 
-  geom_point(alpha=0.2) + 
-  facet_grid(paste0("Step",thru.stage)~PNK, scale="free_y") + 
-  scale_y_log10(limits=c(10^-2,10^5), breaks=10^seq(-2,5), labels = scales::trans_format("log10", scales::math_format())) + 
-  scale_x_continuous(labels=scales::percent) + 
-  theme_bw() + 
-  theme(legend.position = "top", axis.ticks = element_line(size=0.5), panel.grid = element_blank(), text = element_text(color="black", size=6)) 
-
-
-ggplot(stage.split.gene.quant.all.gene, aes(y=median.cpm.ALL, color=PNK, x=percent.mapping.repeats)) + geom_point(alpha=0.3) + facet_grid(paste0("Step",thru.stage)~PNK) + scale_y_log10() + scale_x_continuous(labels=scales::percent) + theme_bw() + theme(legend.position = "top")
-
-
-stage.split.gene.quant.stage1 <- stage.split.gene.quant[[1]]
-stage.split.gene.quant.stage1[, percent.rep.all:=sample.read.count.allmap_CISorTRANS/sample.read.count.allmap_ALL]
-stage.split.gene.quant.stage1[, percent.rep.cis:=sample.read.count.allmap_CIS/sample.read.count.allmap_ALL]
-#ggplot(stage.split.gene.quant.stage1, aes(x=10^6*sample.read.count.allmap_ALL/tot.count.sample, y=percent.rep.all)) + geom_point() + facet_wrap(~participant.ID) + scale_x_log10()
-#ggplot(stage.split.gene.quant.stage1, aes(y=10^6*sample.read.count.allmap_ALL/tot.count.sample, x=percent.rep.cis)) + geom_point() + facet_grid(participant.ID~PNK) + scale_y_log10() + scale_x_continuous(labels=scales::percent, limits = c(0,1))
-#ggplot(stage.split.gene.quant.stage1, aes(y=10^6*sample.read.count.allmap_ALL/tot.count.sample, x=percent.rep.all)) + geom_point() + facet_grid(participant.ID~PNK) + scale_y_log10() + scale_x_continuous(labels=scales::percent, limits = c(0,1))
-
-stage.split.gene.quant.stage2 <- stage.split.gene.quant[[2]]
-stage.split.gene.quant.stage2[, percent.rep.all:=sample.read.count.allmap_CISorTRANS/sample.read.count.allmap_ALL]
-stage.split.gene.quant.stage2[, percent.rep.cis:=sample.read.count.allmap_CIS/sample.read.count.allmap_ALL]
-#ggplot(stage.split.gene.quant.stage2, aes(x=10^6*sample.read.count.allmap_ALL/tot.count.sample, y=percent.rep.all)) + geom_point() + facet_wrap(~participant.ID) + scale_x_log10()
-ggplot(stage.split.gene.quant.stage2, aes(y=10^6*sample.read.count.allmap_ALL/tot.count.sample, x=percent.rep.cis)) + geom_point() + facet_grid(participant.ID~PNK) + scale_y_log10() + scale_x_continuous(labels=scales::percent, limits = c(0,1))
-ggplot(stage.split.gene.quant.stage2, aes(y=10^6*sample.read.count.allmap_ALL/tot.count.sample, x=percent.rep.all)) + geom_point() + facet_grid(participant.ID~PNK) + scale_y_log10() + scale_x_continuous(labels=scales::percent, limits = c(0,1))
-
-stage.split.gene.quant.stage3 <- stage.split.gene.quant[[3]]
-stage.split.gene.quant.stage3[, percent.rep.all:=sample.read.count.allmap_CISorTRANS/sample.read.count.allmap_ALL]
-stage.split.gene.quant.stage3[, percent.rep.cis:=sample.read.count.allmap_CIS/sample.read.count.allmap_ALL]
-ggplot(stage.split.gene.quant.stage3, aes(x=10^6*sample.read.count.allmap_ALL/tot.count.sample, y=percent.rep.all)) + geom_point() + facet_wrap(~participant.ID) + scale_x_log10()
-ggplot(stage.split.gene.quant.stage3, aes(y=10^6*sample.read.count.allmap_ALL/tot.count.sample, x=percent.rep.cis)) + geom_point() + facet_grid(participant.ID~PNK) + scale_y_log10() + scale_x_continuous(labels=scales::percent, limits = c(0,1))
-ggplot(stage.split.gene.quant.stage3, aes(y=10^6*sample.read.count.allmap_ALL/tot.count.sample, x=percent.rep.all)) + geom_point() + facet_grid(participant.ID~PNK) + scale_y_log10() + scale_x_continuous(labels=scales::percent, limits = c(0,1))
-
-
 # Look at strand specificity for individual features types. Combine the groups together ----
-
 
 repeat.dt[, is.enst:=startsWith(rep.name, "ENST")]
 rmsk.dt <- copy(repeat.dt[is.enst==FALSE])
@@ -620,8 +551,6 @@ reads.dt1.annot.all.uniqmap[, feature.type.simple.orient:=paste0(feature.type.si
 
 reads.dt1.annot.all.uniqmap[, same.strand:=strand==strand.1]
 reads.dt1.annot.all.uniqmap.summ <- dcast.data.table(reads.dt1.annot.all.uniqmap[annot.source=="RMSK"], feature.type.simple~aln.orientation, fun.aggregate = sum, fill = 0, value.var = "sample.read.count")
-ggplot(reads.dt1.annot.all.uniqmap.summ, aes(x=feature.type.simple, y=log2(SENSE/ANTI))) + geom_bar(stat="identity")
-
 
 # disjoint 
 setkey(reads.dt1.annot.all, transcript_type, feature.type.simple, aln.orientation)
@@ -647,44 +576,11 @@ setkey(feat.info.dt, transcript_type, feature.type.simple, aln.orientation)
 setkey(reads.dt1.annot.all.uniqmap, transcript_type, feature.type.simple, aln.orientation)
 reads.dt1.annot.all.uniqmap[feat.info.dt, transcript.type.orient:=i.transcript.type.orient, on=key(reads.dt1.annot.all.uniqmap)]
 
-reads.dt1.annot.all.uniqmap.summ.all <- reads.dt1.annot.all.uniqmap[,  .N, keyby=.(origSequence, annot.source, transcript.type.orient)]
-s.m.read.feat.group.all.uniqmap <- sparseM.from.dt(reads.dt1.annot.all.uniqmap.summ.all, i="origSequence", j="transcript.type.orient", x=1, make.binary = TRUE)
-s.m.read.feat.group.all.uniqmap.ig <- to.igraph(s.m.read.feat.group.all.uniqmap)
-s.m.read.feat.group.all.uniqmap.cp <- crossprod(s.m.read.feat.group.all.uniqmap)
-
-
-s.m.read.feat.group.all.uniqmap.ngc <- as(s.m.read.feat.group.all.uniqmap, "ngCMatrix")
-s.im.x <- as(t(s.m.read.feat.group.all.uniqmap.ngc), "transactions")
-ident.set.id.x <- .Call(arules:::R_pnindex, s.im.x@data, NULL, FALSE)
-first.names <- s.m.read.feat.group.all.uniqmap[sapply(seq(max(ident.set.id.x)), match, table=ident.set.id.x),]
-
-
-transcript.type.orient.m <- crossprod(sparseM.from.dt(reads.dt1.annot.all.uniqmap, i="origSequence", j="transcript.type.orient"))
-feature.type.simple.orient.m <- crossprod(sparseM.from.dt(reads.dt1.annot.all.uniqmap, i="origSequence", j="feature.type.simple.orient"))
-
-
-# Guitar analysis ----
-
-gencode.biotypes.groups <- fread("./data/biotypes_annot.txt", header=FALSE)
+gencode.biotypes.groups <- fread(gencode.biotypes.fl, header=FALSE)
 setnames(gencode.biotypes.groups, c("gene.or.trx", "group", "biotype"))
-tx.db.file <- "./data/TxDb.Hsapiens.Gencode27.GRCh38.basic"
+
 txdb.gencode <- loadDb(tx.db.file)
-#gc_txdb <- makeGuitarCoordsFromTxDb(txdb.gencode, minimalComponentLength = 20)
 
-gencode.biotypes.groups <- fread("./data/biotypes_annot.txt", header=FALSE)
-setnames(gencode.biotypes.groups, c("gene.or.trx", "group", "biotype"))
-
-
-exons <- exonsBy(txdb.gencode, by="tx", use.names=TRUE)
-count <- countOverlaps(exons, exons)
-
-
-reads.dt1.sample.counts.uniq.gr.list <- GRangesList(lapply(split(reads.dt1.sample.counts.uniq, by="PNK"), FUN=function(x) x[, GRanges(seqnames, IRanges(start, end), strand = strand)]))
-
-reads.dt1.sample.counts.uniq.gr <- reads.dt1.sample.counts.uniq[, GRanges(seqnames, IRanges(start, end), strand = strand, mcols=DataFrame(.SD))]
-reads.dt1.sample.counts.uniq.gr <- GNCList(reads.dt1.sample.counts.uniq.gr)
-
-#GuitarPlot(gfeatures = reads.dt1.sample.counts.uniq.gr, GuitarCoordsFromTxDb = gc_txdb)
 tx.info <- gtf.dt[type=="transcript"]
 setkey(tx.info, transcript_id)
 
@@ -764,13 +660,7 @@ setkey(reads.dt1.sample.counts.thru1.sum, seqnames, start, end)
 setkey(reads.dt1.sample.counts.thru2.sum, seqnames, start, end)
 setkey(reads.dt1.sample.counts.thru3.sum, seqnames, start, end)
 setkey(txdbFeatures.gr.sRNA.exon.dt, seqnames, start, end)
-gtf.full.loc="/data/genomic_data/Homo_sapiens/UCSC/GRCh38/ANNOTATIONS/GENCODE/v27/gencode.v27.primary_assembly.annotation.gtf"
-
-gtf.full.tmp <- paste0("/dev/shm/", basename(gtf.full.loc))
-if(!file.exists(gtf.full.tmp)){
-  system(paste0("cp ", gtf.loc, " ", gtf.full.tmp))
-}
-gtf.full <- importGtf(gtf.full.tmp, keepStandardChr = FALSE, readFromRds = FALSE, saveObjectAsRds = TRUE, overwriteObjectAsRds = TRUE)
+gtf.full <- importGtf(gtf.full.loc, keepStandardChr = FALSE, readFromRds = FALSE, saveObjectAsRds = TRUE, overwriteObjectAsRds = TRUE)
 gtf.dt.full <- as.data.table(gtf.full)
 sRNA.features <- unlist(unique(sapply(c("miRNA", "misc_RNA", "snRNA", "snoRNA", "rRNA", "ribozyme", "Mt_tRNA", "Mt_rRNA", "scRNA", "scaRNA", "vaultRNA", "sRNA"), grep, x=gtf.dt.full[, .N, by=transcript_type]$transcript_type, ignore.case=TRUE, value=TRUE)))
 
@@ -796,8 +686,6 @@ if(txdbFeatures.gr.types.dt[, !all.equal(.I, row.num.tmp)]){
 simple.colnames <- c("seqnames", "start", "end", "strand", "tx_name", "gene_name", "feature_type", "transcript_type", "transcript.type.group", "feat.type.grp", "row.num.tmp")
 txdbFeatures.gr.types.dt.simple <- subset(txdbFeatures.gr.types.dt, select=simple.colnames)
 setindex(txdbFeatures.gr.types.dt.simple, row.num.tmp)
-
-
 
 reads.dt1.sample.counts.thru3.sum.featol <- foverlaps(reads.dt1.sample.counts.thru3.sum, txdbFeatures.gr.types.dt.simple, nomatch = 0)
 reads.dt1.sample.counts.thru2.sum.featol <- foverlaps(reads.dt1.sample.counts.thru2.sum, txdbFeatures.gr.types.dt.simple, nomatch = 0)
