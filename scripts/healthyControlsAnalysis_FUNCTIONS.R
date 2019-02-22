@@ -16,8 +16,15 @@ percentilerank<-function(x){
 bam.to.dt.f <- function(bam.file, bam.params=param){
   readsGA <- readGAlignments(bam.file, param=param)
   dt <- as.data.table(readsGA)
-  dt <- dt[grepl("N")]
+  #dt <- dt[grepl("N")]
   return(dt)
+}
+
+
+# FUNCTION: Local evaluation of a det of expressions. Returns last call.
+local2 <- function(expr) {
+  env <- env(caller_env())
+  eval_bare(enexpr(expr), env)
 }
 
 # FUNTION to optionally read or write file. Default sets read.file=TRUE so that pre-computed files 
