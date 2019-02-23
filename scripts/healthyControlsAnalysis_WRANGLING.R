@@ -69,15 +69,14 @@ processed.fasta.files <- dir(contam.dir, pattern="*Processed.fa", full.names=TRU
 #  Bam files named and listed by subdir.
 bamfiles.list <- sapply(dir(base.dir, full.names=TRUE, include.dirs=TRUE, recursive=FALSE), dir, pattern="*bam$", full.names=TRUE)
 # Remove files that don't have a ".bai" index file
-bamfiles.list <- sapply(bamfiles.list, USE.NAMES = TRUE, simplify=FALSE, function(x) BamFileList(x[file.exists(paste0(x, ".bai"))]))
+bamfiles.list <- sapply(bamfiles.list, USE.NAMES = TRUE, simplify=FALSE, function(x){ x.f <- x[file.exists(paste0(x, ".bai"))]; if(length(x.f)==1){BamFile(x.f)} else{BamFileList(x.f)}})
 bamfiles.list <- bamfiles.list[sapply(bamfiles.list, length)>0]
 bamfiles.path.list <- names(bamfiles.list)
 names(bamfiles.list) <- basename(names(bamfiles.list))
 # Bam file from unfiltered read alignments (using collapsed FASTA file)
 unfilt.bam.path <- bamfiles.path.list[which(names(bamfiles.list)=="02b-star_alignment_all")]
 unfilt.bam.index.file <- dir(unfilt.bam.path, "*bai", full.names=TRUE)
-unfilt.bam.files <- bamfiles.list[["02b-star_alignment_all"]]
-unfilt.bam.file <- unfilt.bam.files[pmatch(sub(".bai", "", unfilt.bam.index.file), unfilt.bam.files)]
+unfilt.bam.file <- bamfiles.list[["02b-star_alignment_all"]]
 
 # Data files for exceRpt comparison. 
 # To generage files, ULMC135 fastq files were run through the exceRpt pipeline using the Genboree workbench (http://genboree.org/java-bin/login.jsp).
@@ -100,33 +99,58 @@ repeat.dt[, start:=start+1]
 setkeyv(repeat.dt, c("seqnames", "start", "end"))
 
 # Load read counts and sequence from trimmed, collapsed reads
-read.count.fa.dt <- rbindlist(lapply(processed.fasta.files, 
-                                     FUN=function(fl){
-                                       bn <- gsub("_l001_l004_l007_Processed.fa", "", basename(fl))
-                                       dt <- fread(fl, sep="\t", header=FALSE)
-                                       dt[, grp:=c(0,1)]
-                                       setkey(dt, grp)
-                                       dt2 <- data.table(read.ID=dt[grp==0]$V1, origSequence=dt[grp==1]$V1)
-                                       dt2[, File.Base.ID2:=bn]
-                                       return(dt2)
-                                     }))
-read.count.fa.dt[, sample.read.count:=tstrsplit(read.ID, split="-", fixed=TRUE, type.convert = TRUE, keep=2)]
-read.count.fa.dt[, read.ID:=NULL]
+read.count.seq.by.sample <- local({
+  read.count.fa.dt <- rbindlist(lapply(processed.fasta.files, 
+                                       FUN=function(fl){
+                                         bn <- gsub("_l001_l004_l007_Processed.fa", "", basename(fl))
+                                         dt <- fread(fl, sep="\t", header=FALSE)
+                                         dt[, grp:=c(0,1)]
+                                         setkey(dt, grp)
+                                         dt2 <- data.table(read.ID=dt[grp==0]$V1, origSequence=dt[grp==1]$V1)
+                                         dt2[, File.Base.ID2:=bn]
+                                         return(dt2)
+                                       }))
+  setkey(read.count.fa.dt, File.Base.ID2)
+  old.filenames <- read.count.fa.dt[, .N, by=File.Base.ID2]$File.Base.ID2
+  
+  THIS.SAMPLE.INFO <- ALL.SAMPLE.INFO[, old.filename:=old.filenames[pmatch(File.Base.ID2, old.filenames)]][!is.na(old.filename)]
+  setkey(THIS.SAMPLE.INFO, old.filename)
+  
+  read.count.fa.dt[THIS.SAMPLE.INFO, File.Base.ID2:=i.File.Base.ID2, on=c(File.Base.ID2="old.filename")]
+  
+  file.ids.all <- read.count.fa.dt[, .N, by=File.Base.ID2]$File.Base.ID2
+  keep.cols <- c("File.Base.ID2", "Description", "participant.ID", "replicate.n", "PNK")
+  
+  THIS.SAMPLE.INFO.f <- subset(ALL.SAMPLE.INFO, File.Base.ID2%in%file.ids.all, select=keep.cols)
+  THIS.SAMPLE.INFO.f[, Sample.ID:=paste0(participant.ID, ".", PNK)]
+  THIS.SAMPLE.INFO.f[, Sample.Repl.ID:=paste0(participant.ID, ".", PNK, ".", replicate.n)]
+  setkey(read.count.fa.dt, File.Base.ID2)
+  setkey(THIS.SAMPLE.INFO.f, File.Base.ID2)
+  read.count.fa.dt <- merge(read.count.fa.dt, THIS.SAMPLE.INFO.f)
+  read.count.fa.dt[, sample.read.count:=tstrsplit(read.ID, split="-", fixed=TRUE, type.convert = TRUE, keep=2)]
+  read.count.fa.dt[, read.ID:=NULL]
+  
+  read.count.fa.dt[, tot.count.sample:=sum(sample.read.count), by=File.Base.ID2]
+  read.count.fa.dt[, tot.uniq.count.sample:=.N, by=File.Base.ID2]
+  # Merge replicate data
+  read.count.seq.by.sample <- read.count.fa.dt[, .(sample.read.count=sum(sample.read.count)), by=.(origSequence, participant.ID, PNK, Sample.ID)]
+  read.count.seq.by.sample[, `:=`(tot.count.sample=sum(sample.read.count), tot.uniq.count.sample=.N), by=Sample.ID]
+  read.count.seq.by.sample[, cpm.read:=(10^6*sample.read.count)/tot.count.sample]
+  read.count.seq.by.sample
+  
+})
+
+
 
 # Import bam alignments from full input fasta (STAGE 1)----
 # Remove secondary alignments and convert to data table
-reads.dt1 <- bam.to.dt.f(unfilt.bam.file, bam.params = param)
+reads.dt1 <- bam.to.dt.f(bam.file = unfilt.bam.file, bam.params = param)
 reads.dt1[, c("origSequence", "nSamples.detected", "tot.count"):=tstrsplit(qname, split="-", fixed=TRUE)]
 uniq.read.ids.unfilt <- reads.dt1[, .N, by=.(qname, origSequence, nSamples.detected, tot.count)]
 
 
-testgr <- readGAlignments(bamfiles.list[["05-filtered"]][[1]], param=param)
-testgrc <- copy(testgr)
 
-testgr2 <- unlist(testgr, recursive = FALSE)
-setDT(testgr2)
-
-reads.dt23 <- local2({
+uniq.read.count <- local2({
   # Import bam alignments after first contaminate filtering  (STAGE 2) ----
   reads.dt2 <- rbindlist(lapply(bamfiles.list[["04-split_readgroups"]], 
                            FUN=function(fl){
@@ -163,10 +187,10 @@ reads.dt23 <- local2({
   #rm(list = c("reads.dt2", "reads.dt3", "reads.dt2.gr", "reads.dt3.gr"))
   setnames(reads.dt23, "seq", "origSequence")
   setkey(reads.dt23, origSequence, dirnm, File.Base.ID2)
-  reads.dt23
+  uniq.read.count <- reads.dt23[, .N, by=.(origSequence, dirnm, File.Base.ID2, read.ID)][, .(uniq.read.count=.N), by=.(origSequence, dirnm, File.Base.ID2)]
+  uniq.read.count
 })
 
-uniq.read.count <- reads.dt23[, .N, by=.(origSequence, dirnm, File.Base.ID2, read.ID)][, .(uniq.read.count=.N), by=.(origSequence, dirnm, File.Base.ID2)]
 read.detected.in.filt.set <- dcast.data.table(uniq.read.count, origSequence~dirnm, fill=0, value.var = "uniq.read.count", fun.aggregate = sum)
 
 setkey(read.detected.in.filt.set, origSequence)
@@ -177,27 +201,9 @@ sel.cols <- colnames(read.detected.in.filt.set)[!colnames(read.detected.in.filt.
 new.cols <- paste0("pass.contam.filt", seq_along(sel.cols))
 reads.dt1[read.detected.in.filt.set, (sel.cols):=lapply(sel.cols, function(x) get(paste0("i.", x)))][, (new.cols):=lapply(.SD, function(y) y>0 & !is.na(y)), .SDcols=sel.cols][, (sel.cols):=NULL][]
 
-setkey(read.count.fa.dt, File.Base.ID2)
-old.filenames <- read.count.fa.dt[, .N, by=File.Base.ID2]$File.Base.ID2
-
-THIS.SAMPLE.INFO <- ALL.SAMPLE.INFO[, old.filename:=old.filenames[pmatch(File.Base.ID2, old.filenames)]][!is.na(old.filename)]
-setkey(THIS.SAMPLE.INFO, old.filename)
-
-read.count.fa.dt[THIS.SAMPLE.INFO, File.Base.ID2:=i.File.Base.ID2, on=c(File.Base.ID2="old.filename")]
-
-file.ids.all <- read.count.fa.dt[, .N, by=File.Base.ID2]$File.Base.ID2
-keep.cols <- c("File.Base.ID2", "Description", "participant.ID", "replicate.n", "PNK")
-
-THIS.SAMPLE.INFO.f <- subset(ALL.SAMPLE.INFO, File.Base.ID2%in%file.ids.all, select=keep.cols)
-THIS.SAMPLE.INFO.f[, Sample.ID:=paste0(participant.ID, ".", PNK)]
-THIS.SAMPLE.INFO.f[, Sample.Repl.ID:=paste0(participant.ID, ".", PNK, ".", replicate.n)]
-setkey(read.count.fa.dt, File.Base.ID2)
-setkey(THIS.SAMPLE.INFO.f, File.Base.ID2)
-read.count.fa.dt <- merge(read.count.fa.dt, THIS.SAMPLE.INFO.f)
 
 # For some reason, one read with a "N" gapped alignment showed up in the ouptut, even though it was explicitly disallowed by the STAR alignment parameters.
 # No other file across the ~400 Biofragmenta files had this. Remove it here
-read.count.fa.dt <- subset(read.count.fa.dt, origSequence!="AATCCACTGCCTCCAAAGAAACGATTGAACAGGAGAAGCAGCAGGCGAATCGT")
 reads.dt1 <- subset(reads.dt1, origSequence!="AATCCACTGCCTCCAAAGAAACGATTGAACAGGAGAAGCAGCAGGCGAATCGT")
 
 # Add a stage variable
@@ -205,47 +211,31 @@ reads.dt1[, thru.biofrag.stage:=1+rowSums(.SD), .SDcols=c("pass.contam.filt1", "
 # Make a genomic regions object from the read loci
 reads.dt1.gr <- reads.dt1[, GRanges(seqnames=seqnames, strand=strand, ranges=IRanges(start, end))]
 # find overlapping ranges to "cluster" the read alignments
-gr.reduce <- GenomicRanges::reduce(reads.dt1.gr, with.revmap=FALSE)
-gr.reduce.dt <- data.table(as.data.frame(gr.reduce))
+gr.reduce.dt <- data.table(as.data.frame(GenomicRanges::reduce(reads.dt1.gr, with.revmap=FALSE)))
 gr.reduce.dt[, width:=NULL]
 gr.reduce.dt[, overlappingQuery:=paste(seqnames, start, end, strand, sep=":")]
-mcols(gr.reduce) <- gr.reduce.dt$overlappingQuery
 setkey(gr.reduce.dt, seqnames, strand, start, end)
 setkey(reads.dt1, seqnames, strand, start, end)
-reads.dt1c <- foverlaps(gr.reduce.dt, reads.dt1, verbose = TRUE)
+reads.dt1 <- foverlaps(gr.reduce.dt, reads.dt1, verbose = TRUE)
+
+# add sample count info to reads.dt1
+setkey(read.count.seq.by.sample, "origSequence")
+setkey(reads.dt1, "origSequence")
+reads.dt1.sample.counts <- merge(reads.dt1, read.count.seq.by.sample, by="origSequence", allow.cartesian=TRUE)
+reads.dt1.sample.counts[, is.unique.map:=NH==1]
+setkey(reads.dt1.sample.counts, overlappingQuery, Sample.ID)
+reads.dt1.sample.counts.thru2 <- reads.dt1.sample.counts[thru.biofrag.stage!=1]
+reads.dt1.sample.counts.thru3 <- reads.dt1.sample.counts.thru2[thru.biofrag.stage!=2]
+keep.cols.v <- c("seqnames", "strand", "start", "end", "overlappingQuery", "participant.ID",  "PNK", "Sample.ID")
+reads.dt1.sample.counts.thru1.sum <- OQ.summary.f(reads.dt1.sample.counts, keep.cols.v)
+reads.dt1.sample.counts.thru2.sum <- OQ.summary.f(reads.dt1.sample.counts.thru2, keep.cols.v)
+reads.dt1.sample.counts.thru3.sum <- OQ.summary.f(reads.dt1.sample.counts.thru3, keep.cols.v)
 
 
-
-
-
-# OLD ----
-
-
-# Save big files ----
-reads.dt1.fl <- "20180810_All_Unfilt_read_collapsed_align.txt"
-read.count.fa.dt.fl <- "20180810_All_Unfilt_read_collapsed_counts_per_sample.txt"
-#fwrite(reads.dt1, file = reads.dt1.fl, sep="\t", row.names=FALSE, col.names=TRUE, quote=FALSE)
-#fwrite(read.count.fa.dt, file = read.count.fa.dt.fl, sep="\t", row.names=FALSE, col.names=TRUE, quote=FALSE)
-# Start here if already processed ----
-reads.dt1 <- fread(reads.dt1.fl, header=TRUE, sep="\t")
-read.count.fa.dt <- fread(read.count.fa.dt.fl, header=TRUE, sep="\t")
-
-
-
-# Annotation V2 ----
-
+# Get gene annotations ----
 gtf <- importGtf(gtf.loc)
 txdbFeatures <- getTxdbFeaturesFromGRanges(gtf)
 txdbFeatures.dt <- lapply(txdbFeatures, FUN=function(x){dt <- as.data.table(x); setkey(dt, seqnames, strand, start, end)})
-
-
-queryRegions <- gr.reduce
-queryRegions.opp <- queryRegions
-strand(queryRegions.opp) <- ifelse(strand(queryRegions)=="+", 
-                                   "-",
-                                   ifelse(strand(queryRegions)=="-",
-                                          "+",
-                                          "*"))
 gtf.dt <- as.data.table(gtf)
 gene.types.dt <- gtf.dt[, .N, by=gene_type]
 keep.features <- c("protein_coding", "processed_transcript", "lincRNA", "3prime_overlapping_ncRNA", "antisense", "non_coding", 
@@ -265,49 +255,23 @@ keep.features <- c("exons", "introns", "promoters")
 txdbFeatures.dt.c <- rbindlist(txdbFeatures.dt, fill=TRUE)
 txdbFeatures.dt.filt <- txdbFeatures.dt.c[feature_type%in%keep.features]
 txdbFeatures.dt.filt[, c("tx_id", "exon_id", "exon_name", "exon_rank", "cds_id", "cds_name"):=NULL]
-
-
-
 setkeyv(gtf.dt, c("seqnames", "start", "end"))
 setkeyv(gr.reduce.dt, c("seqnames", "start", "end"))
-overlaps2 <- foverlaps(gtf.dt, gr.reduce.dt, verbose=TRUE)
-overlaps2.filt <- overlaps2[!is.na(start) & !is.na(i.start)]
-overlaps2.filt[, aln.orientation:=ifelse(strand==i.strand, "SENSE", "ANTI")]
 
-#overlaps <- as.data.table(queryGff(queryRegions=queryRegions, gffData = gtf))
-overlaps2.filt[, gene_type_orient:=paste0(gene_type, ".", aln.orientation)]
+# OLD ----
 
 
-# Now get the merged ID in to the read count info per file
-setkey(reads.dt1, origSequence)
-setkey(read.count.fa.dt, origSequence, File.Base.ID2)
+# Save big files ----
+reads.dt1.fl <- "20180810_All_Unfilt_read_collapsed_align.txt"
+#read.count.fa.dt.fl <- "20180810_All_Unfilt_read_collapsed_counts_per_sample.txt"
+#fwrite(reads.dt1, file = reads.dt1.fl, sep="\t", row.names=FALSE, col.names=TRUE, quote=FALSE)
+#fwrite(read.count.fa.dt, file = read.count.fa.dt.fl, sep="\t", row.names=FALSE, col.names=TRUE, quote=FALSE)
+# Start here if already processed ----
+reads.dt1 <- fread(reads.dt1.fl, header=TRUE, sep="\t")
 
-read.count.fa.dt[, tot.count.sample:=sum(sample.read.count), by=File.Base.ID2]
-read.count.fa.dt[, tot.uniq.count.sample:=.N, by=File.Base.ID2]
-sample.replicate.count.totals <- read.count.fa.dt[, .(tot.count.sample.repl=tot.count.sample[1], tot.uniq.count.sample.repl=tot.uniq.count.sample[1]), by=.(File.Base.ID2, Sample.Repl.ID, Sample.ID, PNK)]
-sample.replicate.count.totals[, `:=`(tot.count.sample=sum(tot.count.sample.repl)), by=Sample.ID]
-
-# Merge replicate data
-read.count.seq.by.sample <- read.count.fa.dt[, .(sample.read.count=sum(sample.read.count)), by=.(origSequence, participant.ID, PNK, Sample.ID)]
-read.count.seq.by.sample[, `:=`(tot.count.sample=sum(sample.read.count), tot.uniq.count.sample=.N), by=Sample.ID]
-
-sample.count.totals <- read.count.seq.by.sample[, .(tot.count.sample=tot.count.sample[1], tot.uniq.count.sample=tot.uniq.count.sample[1]), by=.(Sample.ID, participant.ID, PNK)]
-read.count.seq.by.sample[, cpm.read:=(10^6*sample.read.count)/tot.count.sample]
-setkey(read.count.seq.by.sample, origSequence)
-# add sample count info to reads.dt1
-reads.dt1.sample.counts <- merge(reads.dt1, read.count.seq.by.sample, by="origSequence", allow.cartesian=TRUE)
-reads.dt1.sample.counts[, is.unique.map:=NH==1]
-setkey(reads.dt1.sample.counts, overlappingQuery, Sample.ID)
+quit()
 
 
-reads.dt1.sample.counts.thru2 <- reads.dt1.sample.counts[thru.biofrag.stage!=1]
-reads.dt1.sample.counts.thru3 <- reads.dt1.sample.counts.thru2[thru.biofrag.stage!=2]
-
-keep.cols.v <- c("seqnames", "strand", "start", "end", "overlappingQuery", "participant.ID",  "PNK", "Sample.ID")
-
-reads.dt1.sample.counts.thru1.sum <- OQ.summary.f(reads.dt1.sample.counts, keep.cols.v)
-reads.dt1.sample.counts.thru2.sum <- OQ.summary.f(reads.dt1.sample.counts.thru2, keep.cols.v)
-reads.dt1.sample.counts.thru3.sum <- OQ.summary.f(reads.dt1.sample.counts.thru3, keep.cols.v)
 
 
 # Save summary counts files
@@ -316,7 +280,6 @@ import.files=TRUE # set to false, if you need to save them
 fread.frwrite.choice.f(file.paths = paste0(filt.stage.summary.coord, ".txt"), r.obj.names = filt.stage.summary.coord, read.file = import.files)
 
 # Get some summary plots from annotatoins
-setkey(overlaps2.filt, overlappingQuery)
 
 value.columns <- Hmisc::Cs(sample.read.count.OQ, sample.cpm.read.OQ, sample.num.uniq.reads.OQ, uniqmap.sample.read.count.OQ, uniqmap.sample.cpm.read.OQ, uniqmap.sample.num.uniq.reads.OQ)
 setkey(reads.dt1.sample.counts.thru1.sum, seqnames, start, end)
@@ -328,22 +291,6 @@ thru1.queryRegionsSum <- summarizeQueryRegions.dt(reads.dt1.sample.counts.thru1.
 thru3.queryRegionsSum[, thru.biofrag.stage:=3]
 thru2.queryRegionsSum[, thru.biofrag.stage:=2]
 thru1.queryRegionsSum[, thru.biofrag.stage:=1]
-
-queryRegionsSum <- rbind(thru1.queryRegionsSum, thru2.queryRegionsSum, thru3.queryRegionsSum)
-queryRegionsSum.melt <- melt(queryRegionsSum, measure.vars = value.columns, variable.name = "measurement", value.name = "value")
-
-queryRegionsSum.melt.tot <- queryRegionsSum.melt[feat=="total"]
-queryRegionsSum.melt[queryRegionsSum.melt.tot, total:=i.value, on=c("Sample.ID", "thru.biofrag.stage", "measurement")]
-queryRegionsSum.melt[, percent.total:=value/total]
-queryRegionsSum.melt[, c("Participant.ID", "PNK"):=tstrsplit(Sample.ID, split=".", fixed=TRUE)]
-queryRegionsSum.melt.f <- queryRegionsSum.melt[!is.na(same.orient) & feat!="total"]
-
-feat.means <- queryRegionsSum.melt.f[measurement=="sample.cpm.read.OQ" & same.orient==TRUE, mean(value), by=feat]
-setorder(feat.means, -V1)
-queryRegionsSum.melt.f[, feat.f:=factor(feat, levels=feat.means$feat)]
-
-queryRegionsSum.melt.f[, thru.biofrag.stage:=as.factor(thru.biofrag.stage)]
-
 
 # Get protein-coding exon/link-RNA reads and then see the corrsponding ovrlap types ----
 mRNA.linRNA.exon.features.dt <- copy(mRNA.lincRNA.txdbFeatures.dt[["exons"]])
@@ -599,10 +546,6 @@ sRNA.features <- unlist(unique(sapply(c("miRNA", "misc_RNA", "snRNA", "snoRNA", 
 exons <- exonsBy(txdb.gencode, by = c("tx"), use.names=TRUE)
 mRNA.lncRNA.txids <- tx.info[!transcript_type%in%sRNA.features]
 sRNA.txids <- tx.info[transcript_type%in%sRNA.features]
-mRNA.lncRNA.tx <- tx[mRNA.lncRNA.txids$tx_row]
-mRNA.lncRNA.exons <- exons[mRNA.lncRNA.tx$tx_name]
-sRNA.exons <-  exons[sRNA.txids$transcript_id]
-sRNA.exons.gr <- unlist(sRNA.exons, use.names = TRUE)
 
 
 invisible(lapply(txdbFeatures.dt, FUN=function(x) x[gencode.biotypes.groups[gene.or.trx=="transcript_type"], transcript.type.group:=i.group, on=c(transcript_type="biotype")]))
@@ -611,8 +554,7 @@ txdbFeatures.gr.mRNA <- lapply(txdbFeatures.dt, FUN=function(x){ x[transcript.ty
 names(txdbFeatures.gr.mRNA) <- paste0("mRNA.", names(txdbFeatures.dt))
 txdbFeatures.gr.lncRNA <- lapply(txdbFeatures.dt, FUN=function(x){ x[transcript.type.group=="lncRNA"] })
 names(txdbFeatures.gr.lncRNA) <- paste0("lncRNA.", names(txdbFeatures.dt))
-txdbFeatures.gr.sRNA <- lapply(txdbFeatures.dt, FUN=function(x){ x[transcript.type.group=="sRNA"] })
-names(txdbFeatures.gr.sRNA) <- paste0("sRNA.", names(txdbFeatures.dt))
+
 txdbFeatures.gr.types <- c(txdbFeatures.gr.mRNA, txdbFeatures.gr.lncRNA)
 txdbFeatures.gr.types <- txdbFeatures.gr.types[elementNROWS(txdbFeatures.gr.types)>0]
 txdbFeatures.gr.types.grl <- lapply(seq_along(txdbFeatures.gr.types), 
@@ -630,36 +572,21 @@ txdbFeatures.gr.types.grl <- lapply(seq_along(txdbFeatures.gr.types),
                                     })
 
 txdbFeatures.gr.types.dt <- rbindlist(txdbFeatures.gr.types, fill=TRUE)
-txdbFeatures.gr.sRNA.exon.dt <- txdbFeatures.gr.sRNA$sRNA.exons
-setkey(txdbFeatures.gr.sRNA.exon.dt, seqnames, start, end)
+
 setkey(txdbFeatures.gr.types.dt, seqnames, start, end)
 setkey(rmsk.dt, seqnames, start, end)
 
-txdbFeatures.gr.sRNA.exon.dt[, row.num.tmp:=.I]
 txdbFeatures.gr.types.dt[, row.num.tmp:=.I]
 rmsk.dt[, row.num.tmp:=.I]
 
-setindex(txdbFeatures.gr.sRNA.exon.dt, row.num.tmp)
 setindex(txdbFeatures.gr.types.dt, row.num.tmp)
 setindex(rmsk.dt, row.num.tmp)
-
-txdbFeatures.gr.types.grl.sRNAOL <- foverlaps(x = txdbFeatures.gr.types.dt, y = txdbFeatures.gr.sRNA.exon.dt, nomatch=0, which=TRUE)
-txdbFeatures.gr.types.dt.sRNAOL <- copy(txdbFeatures.gr.types.dt[txdbFeatures.gr.types.grl.sRNAOL, on=c(row.num.tmp="xid")])
-txdbFeatures.gr.types.dt.sRNAOL[txdbFeatures.gr.sRNA.exon.dt, `:=`(start=i.start, end=i.end, transcript_type=i.transcript_type, transcript.type.group=i.transcript.type.group, rep.strand=i.strand), on=c(yid="row.num.tmp")]
-
-txdbFeatures.gr.types.grl.sRNAOL.dt <- txdbFeatures.gr.sRNA.exon.dt[txdbFeatures.gr.types.grl.sRNAOL$yid, .SD][, xid:=txdbFeatures.gr.types.grl.sRNAOL$xid][]
-txdbFeatures.gr.types.grl.sRNAOL.dt[, c("feat.type.grp", "host_tx_name"):=txdbFeatures.gr.types.dt[xid, .(feat.type.grp, tx_name)]]
-
-txdbFeatures.gr.types.grl.sRNAOL.dt2 <- txdbFeatures.gr.sRNA.exon.dt[txdbFeatures.gr.types.grl.sRNAOL$yid, .SD][, xid:=txdbFeatures.gr.types.grl.sRNAOL$xid][]
-
-
-names(txdbFeatures.gr.types.grl) <- names(txdbFeatures.gr.types)
 
 # Drop sRNAs before summarizing ----
 setkey(reads.dt1.sample.counts.thru1.sum, seqnames, start, end)
 setkey(reads.dt1.sample.counts.thru2.sum, seqnames, start, end)
 setkey(reads.dt1.sample.counts.thru3.sum, seqnames, start, end)
-setkey(txdbFeatures.gr.sRNA.exon.dt, seqnames, start, end)
+
 gtf.full <- importGtf(gtf.full.loc, keepStandardChr = FALSE, readFromRds = FALSE, saveObjectAsRds = TRUE, overwriteObjectAsRds = TRUE)
 gtf.dt.full <- as.data.table(gtf.full)
 sRNA.features <- unlist(unique(sapply(c("miRNA", "misc_RNA", "snRNA", "snoRNA", "rRNA", "ribozyme", "Mt_tRNA", "Mt_rRNA", "scRNA", "scaRNA", "vaultRNA", "sRNA"), grep, x=gtf.dt.full[, .N, by=transcript_type]$transcript_type, ignore.case=TRUE, value=TRUE)))
@@ -1403,35 +1330,6 @@ as.promoter.genes <- reads.dt1.sample.counts.thru3.sum.featol[feat.type.grp=="ln
 as.promoter.genes.gr <- txdbFeatures.dt.c[as.promoter.genes$tx_name, on="tx_name"][feature_type=="promoters", GRanges(seqnames, IRanges(start, end), strand=strand, tx_name, gene_name)]
 as.promoter.genes.nonOverlapping <- as.promoter.genes.gr[as.data.table(findOverlaps(as.promoter.genes.gr, as.promoter.genes.gr))[, w.min:=apply(.SD, 1, min)][, .(wmin.v=min(w.min)), by=queryHits][, .N, by=wmin.v]$wmin.v]
 
-ncols=2
-ngenes=6
-nrows <- ngenes%/%ncols
-grid.newpage()
-pushViewport(viewport(layout=grid.layout(nrows, ncols)))
-for(i in 1:ngenes){
-  this.gene <- as.promoter.genes.nonOverlapping$gene_name[i]
-  pushViewport(viewport(layout.pos.col = ((i - 1)%%ncols) + 1, layout.pos.row = (((i) - 1)%/%ncols) + 1))
-  tl <- cov.fun.reads.thru3(as.gene = this.gene, show.full.range = FALSE)
-  plotTracks(tl[[1]], from = tl[[2]], to=tl[[3]], antisense_RNA="darkred", transcriptAnnotation="symbol", collapseTranscripts="meta", add=TRUE)
-  popViewport(1)
-}
-
-
-queryRegionsSum2[, (tot.cols):=lapply(.SD, sum), by=.(feat.type.grp, participant.ID, PNK, Sample.ID, thru.biofrag.stage), .SDcols=sum.cols]
-queryRegionsSum2[, percent.tot.readcount:=sample.read.count.OQ/sample.read.count.OQ.bothOrient]
-queryRegionsSum2[, percent.tot.uniqread:=sample.num.uniq.reads.OQ/sample.num.uniq.reads.OQ.bothOrient]
-g <- ggplot2::ggplot(queryRegionsSum2, aes(x = thru.biofrag.stage, y = percent.tot.uniqread)) + 
-  geom_boxplot(aes(fill = factor(thru.biofrag.stage)), pos="dodge") +  
-  theme_bw(base_size = 12) + 
-  theme(axis.text.x = element_text(angle = 90), legend.pos="top") + facet_grid(feat.type.grp~PNK); 
-g %+% queryRegionsSum2[same.orient==TRUE]
-
-g <- ggplot2::ggplot(queryRegionsSum2, aes(x = factor(thru.biofrag.stage), fill=PNK, y = percent.tot.uniqread)) + 
-  geom_boxplot(pos="dodge", width=0.75, aes(fill=PNK)) + geom_point(size=0.1, pos=position_jitterdodge(jitter.height = 0, jitter.width = 0.3, dodge.width = 0.75)) + 
-  theme_bw(base_size = 12) + 
-  theme(axis.text.x = element_text(angle = 90), legend.pos="top") + facet_wrap(~feat.type.grp) + geom_hline(yintercept = 0.5, linetype=2) +
-  scale_y_continuous(labels=scales::percent_format(), breaks=seq(0,1,0.1), limits=c(0,1)) +
-  labs(y="% Feature reads aligned in sense orientation"); g %+% queryRegionsSum2[same.orient==TRUE]
 
 thru3.queryRegionsSum <- summarizeQueryRegions.dt(reads.dt1.sample.counts.thru3.sum[overlaps.sRNA==FALSE], txdbFeatures = txdbFeatures.gr.types, by.col=c("Sample.ID"), val.cols = value.columns, ignore.strand = TRUE, check.orientation = TRUE)
 
@@ -1441,117 +1339,6 @@ thru3.queryRegionsSum[, thru.biofrag.stage:=3]
 thru2.queryRegionsSum[, thru.biofrag.stage:=2]
 thru1.queryRegionsSum[, thru.biofrag.stage:=1]
 
-queryRegionsSum <- rbind(thru1.queryRegionsSum, thru2.queryRegionsSum, thru3.queryRegionsSum)
-queryRegionsSum.melt <- melt(queryRegionsSum, measure.vars = value.columns, variable.name = "measurement", value.name = "value")
-
-queryRegionsSum.melt.tot <- queryRegionsSum.melt[feat=="total"]
-queryRegionsSum.melt[queryRegionsSum.melt.tot, total:=i.value, on=c("Sample.ID", "thru.biofrag.stage", "measurement")]
-queryRegionsSum.melt[, percent.total:=value/total]
-queryRegionsSum.melt[, c("Participant.ID", "PNK"):=tstrsplit(Sample.ID, split=".", fixed=TRUE)]
-queryRegionsSum.melt.f <- queryRegionsSum.melt[!is.na(same.orient) & feat!="total"]
-
-feat.means <- queryRegionsSum.melt.f[measurement=="sample.cpm.read.OQ" & same.orient==TRUE, mean(value), by=feat]
-setorder(feat.means, -V1)
-queryRegionsSum.melt.f[, feat.f:=factor(feat, levels=feat.means$feat)]
-
-queryRegionsSum.melt.f[, thru.biofrag.stage:=as.factor(thru.biofrag.stage)]
-g <- ggplot2::ggplot(queryRegionsSum.melt.f, aes(x = feat.f, y = percent.total)) + 
-  geom_boxplot(aes(fill = same.orient), pos="dodge") +  
-  theme_bw(base_size = 14) + 
-  theme(axis.text.x = element_text(angle = 90), legend.pos="top") + facet_grid(paste0("Step", thru.biofrag.stage)~PNK)
-
-g %+% queryRegionsSum.melt.f[measurement=="sample.read.count.OQ"]
-
-
-
-exons <- exonsBy(txdb.gencode, by = "tx", use.names = TRUE)
-tx <- GenomicFeatures:::.tidy_transcripts(txdb.gencode)
-tx$tx_type <- tx.info[tx$tx_name]$transcript_type
-tx$gene_name <- tx.info[tx$tx_name]$gene_name
-ex_by_tx <- GenomicFeatures:::.exons_by_txids(txdb.gencode, mcols(tx)$tx_id)
-tx.f <- tx[mRNA.lncRNA.txids$tx_row]
-ex_by_tx.f <- ex_by_tx[mRNA.lncRNA.txids$tx_row]
-introns_by_tx <- psetdiff(tx.f, ex_by_tx.f)
-ans <- unlist(introns_by_tx, use.names = FALSE)
-idx <- rep(seq_along(tx.f), lengths(introns_by_tx))
-mcols(ans) <- mcols(tx.f)[idx, , drop = FALSE]
-mRNA.lncRNA.intron.parts <- GenomicFeatures:::.break_in_parts(ans, linked.to.single.gene.only = FALSE)
-
-ans <- unlist(ex_by_tx.f, use.names = FALSE)
-idx <- rep(seq_along(tx.f), lengths(ex_by_tx.f))
-mcols(ans) <- cbind(mcols(tx.f)[idx, , drop = FALSE], mcols(ans))
-mRNA.lncRNA.exon.parts <- GenomicFeatures:::.break_in_parts(ans, linked.to.single.gene.only = FALSE)
-
-tx.f <- tx[sRNA.txids$tx_row]
-ex_by_tx.f <- ex_by_tx[sRNA.txids$tx_row]
-ans <- unlist(ex_by_tx.f, use.names = FALSE)
-idx <- rep(seq_along(tx.f), lengths(ex_by_tx.f))
-mcols(ans) <- cbind(mcols(tx.f)[idx, , drop = FALSE], mcols(ans))
-sRNA.exon.parts <- GenomicFeatures:::.break_in_parts(ans, linked.to.single.gene.only = FALSE)
-
-rmsk.gr <- rmsk.dt[, GRanges(seqnames, IRanges(start, end), strand=strand, mcols=DataFrame(.SD)), .SDcols=c("tx_name", "rep.short", "gene_name", "transcript_type", "feature_type", "feature.type.simple")]
-rmsk.gr.dj <- disjoin(rmsk.gr, with.revmap=TRUE)
-ans_mcols <- lapply(mcols(rmsk.gr), function(col) {
-  col <- unique(extractList(col, rmsk.gr.dj$revmap))
-  col[!is.na(col)]
-})
-
-
-mcols(rmsk.gr.dj) <- DataFrame(ans_mcols)
-gencode.seqinfo.df <- read.table("/data/genomic_data/Homo_sapiens/UCSC/GRCh38/STARIndex/chrNameLength.txt", header=FALSE, sep="\t", stringsAsFactors=FALSE)
-gencode.seqinfo <- Seqinfo(seqnames=gencode.seqinfo.df$V1, seqlengths=gencode.seqinfo.df$V2, isCircular=grepl("chrm", gencode.seqinfo.df$V1, ignore.case=TRUE), genome="hg38")
-
-hg38_custom_mRNA.lncRNA.exon.parts <- mRNA.lncRNA.exon.parts
-hg38_custom_mRNA.lncRNA.intron.parts <- mRNA.lncRNA.intron.parts
-hg38_custom_sRNA.exon.parts <- sRNA.exon.parts
-rmsk.gr.dj <- keepSeqlevels(rmsk.gr.dj, seqlevels(gencode.seqinfo), pruning.mode = "coarse")
-seqinfo(rmsk.gr.dj) <- gencode.seqinfo
-
-reads.dt1.sample.counts.uniq <- reads.dt1.sample.counts[thru.biofrag.stage==3]
-
-
-annots = c("hg38_basicgenes", 'hg38_custom_mRNA.lncRNA.exon.parts', 'hg38_custom_mRNA.lncRNA.intron.parts', 'hg38_custom_sRNA.exon.parts', 'hg38_custom_rmsk')
-annotations = build_annotations(genome = 'hg38', annotations = annots)
-
-
-
-read_annotations.rs("mRNA.lncRNA.exon.parts", genome = "hg38")
-
-#overlaps.m <- sparseM.from.dt(overlaps2.filt, "overlappingQuery", "gene_type_orient")
-#overlaps.ig <- to.igraph(overlaps.m)
-#overlaps.ig.bip <- bipartite.projection(to.igraph(overlaps.m), which = TRUE)
-#overlaps.m.cp <- crossprod(overlaps.m)
-#overlaps.jacc <- text2vec::sim2(t(overlaps.m), method="jaccard", norm = "none")
-
-#overlaps.m.ngc <- as(overlaps.m, "ngCMatrix")
-#s.im.x <- as(overlaps.m.ngc, "transactions")
-#ident.set.id.x <- .Call(arules:::R_pnindex, s.im.x@data, NULL, FALSE)
-
-
-
-df <- overlaps2.filt[, .(n.seqs=sum(n.seqs)), by=.(gene_type, aln.orientation, overlappingQuery)][, .(n.seqs=sum(n.seqs)), by=.(gene_type, aln.orientation)]
-setnames(df, c("feature", "orient", "count"))
-df$percent <- round(df$count / length(reads.dt1.gr) * 100, 1)
-df <- df[order(count, decreasing = TRUE)]
-ggplot2::ggplot(df, aes(x = reorder(feature, -percent), y = percent)) + 
-  geom_bar(stat = 'identity', aes(fill = feature)) + 
-  geom_label(aes(y = percent + 0.5), label = df$count) + 
-  labs(x = 'transcript feature', y = paste0('percent overlap (n = ', length(reads.dt1.gr), ')')) + 
-  theme_bw(base_size = 14) + 
-  theme(axis.text.x = element_text(angle = 90))
-
-txdbFeatures <- getTxdbFeaturesFromGRanges(gtf)
-summary <- summarizeQueryRegions(queryRegions = queryRegions, 
-                                 txdbFeatures = txdbFeatures)
-df <- data.frame(summary)
-df$percent <- round((df$count / length(queryRegions)), 3) * 100
-df$feature <- rownames(df)
-ggplot2::ggplot(df, aes(x = reorder(feature, -percent), y = percent)) + 
-  geom_bar(stat = 'identity', aes(fill = feature)) + 
-  geom_label(aes(y = percent + 3), label = df$count) + 
-  labs(x = 'transcript feature', y = paste0('percent overlap (n = ', length(queryRegions), ')')) + 
-  theme_bw(base_size = 14) + 
-  theme(axis.text.x = element_text(angle = 90))
 
 # import sRNAnalysis profile counts ----
 
