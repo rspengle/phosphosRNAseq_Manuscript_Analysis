@@ -1,7 +1,5 @@
 # FUNCTIONS for healthyControlsAnalysis.R
 
-
-
 # Functions ----
 # FUNCTION:  percentile rank funciton ----
 percentilerank<-function(x){

@@ -1,3 +1,6 @@
+# DONE
+# Analysis of synthetic pool libraries. Used to generate figure 1. 
+
 library(data.table)
 library(ggplot2)
 library(Biostrings)
@@ -7,10 +10,14 @@ library(scales)
 library(cowplot)
 library(ggbeeswarm)
 library(ggpubr)
-setDTthreads(16)
+
+# Sets threads used by data.table. Defaults to 3/4 of available resources
+n.cores <- round(detectCores()*0.75)
+setDTthreads(n.cores)
+
 # Data import ----
 data.dir <- "./data/SyntheticPool"
-sample.info.fl=dir(data.dir, pattern="sample_info_synth_use.csv", full.names = TRUE, recursive = TRUE)
+sample.info.fl <- dir(data.dir, pattern="sample_info_synth_use.csv", full.names = TRUE, recursive = TRUE)
 biofragmenta.outdir <- dir(data.dir, pattern="biofragmenta-vsynthetic1.0_20180508_175741", full.names = TRUE, recursive = TRUE, include.dirs = TRUE)
 
 # Load Synthetic pool sequences ----
@@ -23,7 +30,7 @@ subpool.seqs.dt[, c("Aln.SeqID.nm", "Aln.Subpool.ID", "AlnSeq.length", "Modifica
 all.sample.info <- fread(sample.info.fl)
 all.sample.info[, lib.method:=library.method]
 
-# Read full star align instead of sRNAnalysis
+# Read STAR alignments of synthetic pool libraries to database of all pool sequences
 all.star.aln.dt <- fread(paste0(biofragmenta.outdir, "/02b-star_alignment_collapsed/ALL_outAligned.out_USE.txt"))
 all.star.aln.dt[, File.Base.ID:=sub("_L00[1-9]_R1_001.*", "", File.Base.ID[1]), by=File.Base.ID]
 all.star.aln.dt[, lib.method:="TruSeq"]
@@ -150,3 +157,4 @@ fwrite(all.star.aln.dt.annot.filt.feat.tot.cast, file = "./output/tables/2018112
 
 all.star.aln.dt.annot.filt.feat.tot.cast.geo <- subset(all.star.aln.dt.annot.filt.feat.tot.cast, select=Hmisc::Cs(Pool.SeqID, Pool.SeqLen, Modification, PNKheat.count, Untreated.count, PNK.cpm.totAligned, Untreated.cpm.totAligned))
 fwrite(all.star.aln.dt.annot.filt.feat.tot.cast.geo, file = "./output/2019_EMBO_GEO_SUBMISSION/SYNTHETIC/PNK_VS_UNTREATED_TruSeq_SynthPool_counts.txt", sep="\t", quote=FALSE, row.names=FALSE, col.names=TRUE)
+
