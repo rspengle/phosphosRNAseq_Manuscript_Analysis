@@ -5,3 +5,4 @@
 output/*
 testFunctionDeps.R
 testdat.R
+data/*
