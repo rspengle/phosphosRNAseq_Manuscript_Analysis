@@ -6,3 +6,4 @@ output/*
 testFunctionDeps.R
 testdat.R
 data/*
+checkpoint-file
